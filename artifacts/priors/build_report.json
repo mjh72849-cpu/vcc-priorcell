@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "global_gene_count": 19197,
+  "global_vocabulary_sha256": "b6ed3ef5a5d225ba8022a95cc339a13310cde4109bfabb5c7e92d1c0e2a4fce3",
+  "parameters": {
+    "string_minimum_score": 400,
+    "string_top_k": 64
+  },
+  "go": {
+    "terms": 17819,
+    "memberships": 285083,
+    "global": {
+      "covered_genes": 18426,
+      "total_genes": 19197,
+      "fraction": 0.9598374746054071
+    },
+    "vcc": {
+      "covered_genes": 18074,
+      "total_genes": 18533,
+      "fraction": 0.9752333675066098
+    },
+    "vcc_targets": {
+      "covered_genes": 300,
+      "total_genes": 300,
+      "fraction": 1.0
+    }
+  },
+  "reactome": {
+    "pathways": 2298,
+    "memberships": 43783,
+    "global": {
+      "covered_genes": 10898,
+      "total_genes": 19197,
+      "fraction": 0.5676928686773975
+    },
+    "vcc": {
+      "covered_genes": 10643,
+      "total_genes": 18533,
+      "fraction": 0.5742729185776723
+    },
+    "vcc_targets": {
+      "covered_genes": 183,
+      "total_genes": 300,
+      "fraction": 0.61
+    }
+  },
+  "string": {
+    "edges": 358194,
+    "global": {
+      "covered_genes": 18582,
+      "total_genes": 19197,
+      "fraction": 0.9679637443350524
+    },
+    "vcc": {
+      "covered_genes": 18247,
+      "total_genes": 18533,
+      "fraction": 0.984568067771003
+    },
+    "vcc_targets": {
+      "covered_genes": 300,
+      "total_genes": 300,
+      "fraction": 1.0
+    }
+  },
+  "collectri": {
+    "edges": 42213,
+    "positive_edges": 34501,
+    "negative_edges": 7712,
+    "global": {
+      "covered_genes": 6686,
+      "total_genes": 19197,
+      "fraction": 0.34828358597697556
+    },
+    "vcc": {
+      "covered_genes": 6551,
+      "total_genes": 18533,
+      "fraction": 0.35347758053202394
+    },
+    "vcc_targets": {
+      "covered_genes": 120,
+      "total_genes": 300,
+      "fraction": 0.4
+    }
+  },
+  "any_prior": {
+    "global": {
+      "covered_genes": 18771,
+      "total_genes": 19197,
+      "fraction": 0.9778090326613533
+    },
+    "vcc": {
+      "covered_genes": 18407,
+      "total_genes": 18533,
+      "fraction": 0.9932013165704419
+    },
+    "vcc_targets": {
+      "covered_genes": 300,
+      "total_genes": 300,
+      "fraction": 1.0
+    },
+    "vcc_active_source_histogram": {
+      "0": 126,
+      "1": 450,
+      "2": 5807,
+      "3": 7149,
+      "4": 5001
+    }
+  },
+  "sources": {
+    "hgnc": {
+      "path": "/sde/vcc/vcc2026/data/priors/hgnc_complete_set.txt",
+      "size_bytes": 16903161,
+      "sha256": "6f43d6ff43aa9fdfa5fb2f20a20a7cace66e6e02e2a0dcf19d9b726e2e248d20"
+    },
+    "go": {
+      "path": "/sde/vcc/vcc2026/data/priors/HUMAN-uniprot.gaf.gz",
+      "size_bytes": 12109254,
+      "sha256": "a0afba19dfb1f8fa996bc1bdcd61fd0c9bd4cf0d2bf2509d09ac86993c0e70a2"
+    },
+    "reactome": {
+      "path": "/sde/vcc/vcc2026/data/priors/UniProt2Reactome.txt",
+      "size_bytes": 43041375,
+      "sha256": "e34fe56a5129d88d8cd67300c279d7e81fa1d3bf86fa0577cf91032c326eaecc"
+    },
+    "string_info": {
+      "path": "/sde/vcc/vcc2026/data/priors/9606.protein.info.v12.0.txt.gz",
+      "size_bytes": 1970090,
+      "sha256": "144de4b0d98c6a7dfde6ddc2591cf88657f27b989eadff4f501450c3ed1f0f1c"
+    },
+    "string_links": {
+      "path": "/sde/vcc/vcc2026/data/priors/9606.protein.links.v12.0.txt.gz",
+      "size_bytes": 83164437,
+      "sha256": "3e22f32572211aa341d5b4bd08d30c32e693e294603202120936872f87719d4f"
+    },
+    "collectri": {
+      "path": "/sde/vcc/vcc2026/data/priors/collectri_9606.tsv",
+      "size_bytes": 4061567,
+      "sha256": "98ef1163146d2e28ee413e7c909174998cd9d742ea93d97ccfe93f3a14c160c1"
+    }
+  }
+}

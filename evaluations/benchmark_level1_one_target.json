@@ -1,0 +1,93 @@
+{
+  "checkpoint": "checkpoints/benchmark_level1.pt",
+  "checkpoint_level": "global",
+  "checkpoint_step": 29,
+  "model_config": {
+    "num_genes": 19197,
+    "num_output_genes": 18533,
+    "num_go_terms": 0,
+    "num_pathway_terms": 0,
+    "num_perturbation_types": 3,
+    "gene_dim": 128,
+    "cell_dim": 128,
+    "context_dim": 128,
+    "perturbation_dim": 128,
+    "decoder_dim": 64,
+    "graph_layers": 2,
+    "context_prototypes": 8,
+    "dropout": 0.1,
+    "prior_dropout": 0.0,
+    "normalize_active_priors": true,
+    "prior_gate_init_bias": -2.0,
+    "prototype_temperature": 0.5,
+    "max_log_effect": 2.0,
+    "min_dispersion": 0.0001,
+    "eps": 1e-08
+  },
+  "dataset": "../data/vcc_2025/validation/adata_Validation.h5ad",
+  "targets": 1,
+  "summary": {
+    "baseline": {
+      "delta_mse": 0.004236182197928429,
+      "delta_cosine": 0.0,
+      "top_gene_jaccard": 0.002506265664160401,
+      "pseudobulk_mae": 0.0390787236392498,
+      "sliced_wasserstein": 0.017925120890140533
+    },
+    "decoder": {
+      "delta_mse": 0.17091520130634308,
+      "delta_cosine": 0.09139931201934814,
+      "top_gene_jaccard": 0.03626943005181347,
+      "pseudobulk_mae": 0.32789748907089233,
+      "sliced_wasserstein": 0.1734142303466797
+    },
+    "anchored": {
+      "delta_mse": 0.0051657590083777905,
+      "delta_cosine": -0.023057619109749794,
+      "top_gene_jaccard": 0.028277634961439587,
+      "pseudobulk_mae": 0.04283375293016434,
+      "sliced_wasserstein": 0.02734808251261711
+    },
+    "hybrid": {
+      "delta_mse": 0.006610384210944176,
+      "delta_cosine": 0.049968067556619644,
+      "top_gene_jaccard": 0.03626943005181347,
+      "pseudobulk_mae": 0.060851987451314926,
+      "sliced_wasserstein": 0.018403710797429085
+    }
+  },
+  "per_target": [
+    {
+      "target": "ACLY",
+      "cells": 16,
+      "baseline": {
+        "delta_mse": 0.004236182197928429,
+        "delta_cosine": 0.0,
+        "top_gene_jaccard": 0.002506265664160401,
+        "pseudobulk_mae": 0.0390787236392498,
+        "sliced_wasserstein": 0.017925120890140533
+      },
+      "decoder": {
+        "delta_mse": 0.17091520130634308,
+        "delta_cosine": 0.09139931201934814,
+        "top_gene_jaccard": 0.03626943005181347,
+        "pseudobulk_mae": 0.32789748907089233,
+        "sliced_wasserstein": 0.1734142303466797
+      },
+      "anchored": {
+        "delta_mse": 0.0051657590083777905,
+        "delta_cosine": -0.023057619109749794,
+        "top_gene_jaccard": 0.028277634961439587,
+        "pseudobulk_mae": 0.04283375293016434,
+        "sliced_wasserstein": 0.02734808251261711
+      },
+      "hybrid": {
+        "delta_mse": 0.006610384210944176,
+        "delta_cosine": 0.049968067556619644,
+        "top_gene_jaccard": 0.03626943005181347,
+        "pseudobulk_mae": 0.060851987451314926,
+        "sliced_wasserstein": 0.018403710797429085
+      }
+    }
+  ]
+}
