@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train Level 1 or Level 2 PriorCell on real raw-count H5AD datasets."""
+"""Train a learned PriorCell architecture level on real raw-count H5AD data."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from vcc_prior_model import (
     control_reconstruction_loss,
 )
 from vcc_prior_model.real_data import BackedH5adDataset
+from vcc_prior_model.prior_data import PriorArtifacts
 from vcc_prior_model.training import training_schedule
 
 WORKSPACE = Path(__file__).resolve().parents[2]
@@ -168,6 +169,11 @@ def train(args: argparse.Namespace) -> None:
         torch.cuda.set_device(device)
         torch.backends.cuda.matmul.allow_tf32 = True
     vocabulary = GeneVocabularyArtifacts(args.vocabulary)
+    prior_artifacts = (
+        PriorArtifacts(args.priors, vocabulary)
+        if args.level in {"functional_prior", "full_prior"}
+        else None
+    )
     config = ModelConfig(
         num_genes=vocabulary.num_genes,
         num_output_genes=vocabulary.num_output_genes,
@@ -176,11 +182,18 @@ def train(args: argparse.Namespace) -> None:
         context_dim=args.model_dim,
         perturbation_dim=args.model_dim,
         decoder_dim=args.decoder_dim,
+        num_go_terms=(prior_artifacts.num_go_terms if prior_artifacts else 0),
+        num_pathway_terms=(
+            prior_artifacts.num_pathway_terms if prior_artifacts else 0
+        ),
+        graph_layers=args.graph_layers,
         context_prototypes=args.context_prototypes,
         dropout=args.dropout,
-        prior_dropout=0.0,
+        prior_dropout=(args.prior_dropout if prior_artifacts else 0.0),
+        prior_gate_init_bias=args.prior_gate_init_bias,
     )
     model = build_model(args.level, config, vocabulary.output_gene_index).to(device)
+    priors = prior_artifacts.load(device) if prior_artifacts else None
     if args.initialize_from is not None and args.resume is not None:
         raise ValueError("--initialize-from and --resume are mutually exclusive")
     if args.initialize_from is not None:
@@ -201,11 +214,14 @@ def train(args: argparse.Namespace) -> None:
         )
     perturbation_loss = CompositePerturbationLoss(
         LossConfig(
-            expression_weight=0.0,
-            distribution_weight=1.0,
-            delta_weight=0.5,
-            direction_weight=0.1,
+            expression_weight=args.expression_weight,
+            distribution_weight=args.distribution_weight,
+            delta_weight=args.delta_weight,
+            direction_weight=args.direction_weight,
             de_weight=args.de_weight,
+            magnitude_weight=args.magnitude_weight,
+            target_weight=args.target_weight,
+            de_direction_weight=args.de_direction_weight,
             unsupervised_effect_weight=0.0,
             distribution_projections=args.distribution_projections,
         )
@@ -284,6 +300,7 @@ def train(args: argparse.Namespace) -> None:
                         inputs, observed = dataset.sample_control(args.query_cells, rng)
                         output = model.reconstruct_control(
                             move(inputs, device),
+                            priors=priors,
                             query_gene_index=dataset.alignment.input_gene_index.to(device),
                             decode_gene_index=dataset.alignment.decode_gene_index.to(device),
                         )
@@ -313,9 +330,17 @@ def train(args: argparse.Namespace) -> None:
                         perturbed_observed = dataset.sample_perturbed(
                             target, args.query_cells, rng
                         )
+                        perturbed_library = perturbed_observed.sum(
+                            dim=-1, keepdim=True
+                        ).clamp_min(1.0)
+                        control_library = control_observed.sum(
+                            dim=-1, keepdim=True
+                        ).clamp_min(1.0)
                         observed_delta = torch.log1p(
-                            perturbed_observed.mean(dim=0)
-                        ) - torch.log1p(control_observed.mean(dim=0))
+                            perturbed_observed * (10_000.0 / perturbed_library)
+                        ).mean(dim=0) - torch.log1p(
+                            control_observed * (10_000.0 / control_library)
+                        ).mean(dim=0)
                         de_count = min(args.de_genes, observed_delta.numel())
                         de_mask = torch.zeros_like(observed_delta, dtype=torch.bool)
                         if de_count:
@@ -324,6 +349,7 @@ def train(args: argparse.Namespace) -> None:
                             move(context, device),
                             move(query, device),
                             vocabulary.target_index([target]).to(device),
+                            priors=priors,
                             context_gene_index=dataset.alignment.input_gene_index.to(device),
                             query_gene_index=dataset.alignment.input_gene_index.to(device),
                             decode_gene_index=dataset.alignment.decode_gene_index.to(device),
@@ -333,6 +359,7 @@ def train(args: argparse.Namespace) -> None:
                             move(perturbed_observed, device),
                             move(control_observed, device),
                             de_gene_mask=de_mask.unsqueeze(0).to(device),
+                            target_gene_index=vocabulary.target_index([target]).to(device),
                         )
                         loss = parts["loss"]
                 scaler.scale(loss).backward()
@@ -391,11 +418,20 @@ def train(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--level", choices=("global", "cell_state"), required=True)
+    parser.add_argument(
+        "--level",
+        choices=("global", "cell_state", "functional_prior", "full_prior"),
+        required=True,
+    )
     parser.add_argument(
         "--vocabulary",
         type=Path,
         default=WORKSPACE / "priorcell/artifacts/gene_vocabulary",
+    )
+    parser.add_argument(
+        "--priors",
+        type=Path,
+        default=WORKSPACE / "priorcell/artifacts/priors",
     )
     parser.add_argument(
         "--perturbations",
@@ -422,6 +458,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decoder-dim", type=int, default=64)
     parser.add_argument("--context-prototypes", type=int, default=8)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--prior-dropout", type=float, default=0.2)
+    parser.add_argument("--prior-gate-init-bias", type=float, default=-2.0)
+    parser.add_argument("--graph-layers", type=int, default=2)
     parser.add_argument("--control-steps", type=int, default=1_000)
     parser.add_argument("--perturbation-steps", type=int, default=5_000)
     parser.add_argument("--control-every", type=int, default=4)
@@ -432,7 +471,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preference-minimum-targets", type=int, default=1_000)
     parser.add_argument("--distribution-projections", type=int, default=16)
     parser.add_argument("--de-genes", type=int, default=200)
+    parser.add_argument("--expression-weight", type=float, default=0.0)
+    parser.add_argument("--distribution-weight", type=float, default=1.0)
+    parser.add_argument("--delta-weight", type=float, default=0.5)
+    parser.add_argument("--direction-weight", type=float, default=0.1)
     parser.add_argument("--de-weight", type=float, default=0.2)
+    parser.add_argument("--magnitude-weight", type=float, default=0.0)
+    parser.add_argument("--target-weight", type=float, default=0.0)
+    parser.add_argument("--de-direction-weight", type=float, default=0.0)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--gradient-clip", type=float, default=5.0)

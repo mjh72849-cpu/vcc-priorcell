@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a complete 3-context VCC raw-count H5AD from a Level 1/2 checkpoint."""
+"""Generate a complete three-context VCC raw-count H5AD from a checkpoint."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from scipy import sparse
 
 from vcc_prior_model import GeneVocabularyArtifacts, ModelConfig, build_model
 from vcc_prior_model.real_data import BackedH5adDataset
+from vcc_prior_model.prior_data import PriorArtifacts
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 
@@ -64,17 +65,16 @@ def encode_context(
     dataset: BackedH5adDataset,
     device: torch.device,
     chunk_size: int,
+    gene_embeddings: torch.Tensor,
 ) -> Any:
     rows = np.arange(dataset.num_cells, dtype=np.int64)
-    genes = model.encode_genes()
-
     def chunks() -> Any:
         for counts in dataset.input_chunks(rows, chunk_size):
             yield move(counts, device)
 
     return model.encode_context_chunks(
         chunks(),
-        genes,
+        gene_embeddings,
         input_gene_index=dataset.alignment.input_gene_index.to(device),
     )
 
@@ -90,6 +90,7 @@ def generate_context(
     amp_dtype: torch.dtype,
     use_amp: bool,
     shard_path: Path,
+    gene_embeddings: torch.Tensor,
 ) -> dict[str, Any]:
     matrices: list[sparse.csr_matrix] = []
     target_column: list[str] = []
@@ -105,7 +106,7 @@ def generate_context(
             device_type=device.type, dtype=amp_dtype, enabled=use_amp
         ):
             context = encode_context(
-                model, dataset, device, args.context_chunk_size
+                model, dataset, device, args.context_chunk_size, gene_embeddings
             )
         for target_number, target in enumerate(targets):
             target_rng = np.random.default_rng(
@@ -219,6 +220,13 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
     ).to(device)
     model.load_state_dict(checkpoint["model_state"], strict=True)
     model.eval()
+    priors = (
+        PriorArtifacts(args.priors, vocabulary).load(device)
+        if checkpoint["level"] in {"functional_prior", "full_prior"}
+        else None
+    )
+    with torch.inference_mode():
+        gene_embeddings = model.encode_genes(priors)
     args.checkpoint_level = checkpoint["level"]
     args.checkpoint_step = int(checkpoint["step"])
     targets = read_targets(args.perturbations)
@@ -249,6 +257,7 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
                 amp_dtype,
                 use_amp,
                 shard,
+                gene_embeddings,
             )
         )
         shards.append(shard)
@@ -271,6 +280,10 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         "checkpoint": str(args.checkpoint),
         "checkpoint_level": checkpoint["level"],
         "checkpoint_step": int(checkpoint["step"]),
+        "sampling": args.sampling,
+        "decoder_baseline_weight": args.decoder_baseline_weight,
+        "effect_scale": args.effect_scale,
+        "seed": args.seed,
         "contexts": summaries,
     }
     manifest_path = args.output.with_suffix(".manifest.json")
@@ -289,6 +302,11 @@ def parse_args() -> argparse.Namespace:
         "--vocabulary",
         type=Path,
         default=WORKSPACE / "priorcell/artifacts/gene_vocabulary",
+    )
+    parser.add_argument(
+        "--priors",
+        type=Path,
+        default=WORKSPACE / "priorcell/artifacts/priors",
     )
     parser.add_argument(
         "--perturbations",

@@ -9,6 +9,7 @@ import torch
 from vcc_prior_model import (
     ArchitectureLevel,
     CompositePerturbationLoss,
+    LossConfig,
     MembershipEdges,
     ModelConfig,
     PriorAwarePerturbationModel,
@@ -137,6 +138,9 @@ def test_loss_interface_is_finite() -> None:
         "delta",
         "direction",
         "de",
+        "magnitude",
+        "target_gene_loss",
+        "de_direction",
         "unsupervised_effect",
     }
     assert all(torch.isfinite(value) for value in losses.values())
@@ -199,6 +203,11 @@ def test_tiers_use_only_their_declared_priors() -> None:
     assert torch.equal(functional.encode_genes(priors), functional.encode_genes(without_grn))
 
     full = build_model(ArchitectureLevel.FULL_PRIOR, config).eval()
+    # Prior projections intentionally start at zero so a higher tier can be
+    # initialised from Level 2 without a function jump. Activate only GRN here
+    # to verify the tier's declared routing contract.
+    with torch.no_grad():
+        full.gene_encoder.prior_projection["grn"].weight.fill_(0.01)
     assert not torch.equal(full.encode_genes(priors), full.encode_genes(without_grn))
 
     learned = build_model(ArchitectureLevel.CELL_STATE, config).eval()
@@ -214,6 +223,43 @@ def test_conservative_gate_initialization() -> None:
         assert torch.allclose(final.bias, torch.full_like(final.bias, -2.0))
         probe = torch.randn(5, final.in_features)
         assert torch.allclose(torch.sigmoid(final(probe)), expected_gate.expand(5, 1))
+    for projection in model.gene_encoder.prior_projection.values():
+        assert torch.count_nonzero(projection.weight) == 0
+
+
+def test_effect_strength_and_target_losses_receive_gradients() -> None:
+    model, priors = _small_model()
+    context = torch.poisson(torch.full((1, 9, 23), 1.5))
+    query = context[:, :4]
+    target_index = torch.tensor([3])
+    output = model(context, query, target_index, priors)
+    observed = query.clone()
+    observed[..., 3] = 0
+    de_mask = torch.zeros((1, 23), dtype=torch.bool)
+    de_mask[:, 3] = True
+    losses = CompositePerturbationLoss(
+        LossConfig(
+            distribution_weight=0.0,
+            delta_weight=0.0,
+            direction_weight=0.0,
+            de_weight=0.0,
+            magnitude_weight=1.0,
+            target_weight=1.0,
+            de_direction_weight=1.0,
+            unsupervised_effect_weight=0.0,
+        )
+    )(
+        output,
+        observed,
+        query,
+        de_gene_mask=de_mask,
+        target_gene_index=target_index,
+    )
+    assert losses["magnitude"] > 0
+    assert losses["target_gene_loss"] > 0
+    assert losses["de_direction"] > 0
+    losses["loss"].backward()
+    assert model.decoder.effect_cell_projection.weight.grad is not None
 
 
 def test_active_prior_count_normalization() -> None:

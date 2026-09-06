@@ -17,6 +17,7 @@ from torch.nn import functional as F
 from vcc_prior_model import GeneVocabularyArtifacts, ModelConfig, build_model
 from vcc_prior_model.losses import sliced_wasserstein_distance
 from vcc_prior_model.real_data import BackedH5adDataset
+from vcc_prior_model.prior_data import PriorArtifacts
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 
@@ -53,6 +54,20 @@ def effect_metrics(
     observed_top = set(
         observed_delta.abs().topk(k, dim=-1).indices[0].detach().cpu().tolist()
     )
+    union = predicted_top | observed_top
+    observed_top_index = torch.tensor(
+        sorted(observed_top), device=predicted.device, dtype=torch.long
+    )
+    top_sign_accuracy = (
+        (
+            predicted_delta.index_select(-1, observed_top_index).sign()
+            == observed_delta.index_select(-1, observed_top_index).sign()
+        )
+        .to(torch.float32)
+        .mean()
+    )
+    predicted_rms = predicted_delta.square().mean().sqrt()
+    observed_rms = observed_delta.square().mean().sqrt()
     generator = torch.Generator(device=predicted.device).manual_seed(projection_seed)
     directions = torch.randn(
         predicted.shape[-1],
@@ -71,8 +86,11 @@ def effect_metrics(
     return {
         "delta_mse": float(delta_mse),
         "delta_cosine": float(cosine),
-        "top_gene_jaccard": len(predicted_top & observed_top)
-        / max(1, len(predicted_top | observed_top)),
+        "top_gene_jaccard": len(predicted_top & observed_top) / max(1, len(union)),
+        "top_gene_sign_accuracy": float(top_sign_accuracy),
+        "predicted_effect_rms": float(predicted_rms),
+        "observed_effect_rms": float(observed_rms),
+        "effect_rms_ratio": float(predicted_rms / observed_rms.clamp_min(1e-8)),
         "pseudobulk_mae": float(
             (predicted_normalized.mean(dim=1) - observed_normalized.mean(dim=1))
             .abs()
@@ -124,6 +142,11 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     ).to(device)
     model.load_state_dict(checkpoint["model_state"], strict=True)
     model.eval()
+    priors = (
+        PriorArtifacts(args.priors, vocabulary).load(device)
+        if checkpoint["level"] in {"functional_prior", "full_prior"}
+        else None
+    )
     use_amp = device.type == "cuda" and args.amp != "none"
     amp_dtype = torch.bfloat16 if args.amp == "bf16" else torch.float16
 
@@ -135,7 +158,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             min(args.context_cells, len(dataset.control_indices)),
             rng,
         )
-        gene_embeddings = model.encode_genes()
+        gene_embeddings = model.encode_genes(priors)
 
         def context_chunks() -> Any:
             for counts in dataset.input_chunks(context_rows, args.context_chunk_size):
@@ -157,6 +180,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             targets = [target for target in requested if target in available]
         if args.max_targets is not None:
             targets = targets[: args.max_targets]
+        if not targets:
+            raise ValueError("no requested perturbation target is available in the dataset")
         for target_number, target in enumerate(targets):
             query, control_observed = dataset.sample_control(args.cells, rng)
             perturbed_observed = dataset.sample_perturbed(target, args.cells, rng)
@@ -249,6 +274,11 @@ def parse_args() -> argparse.Namespace:
         "--vocabulary",
         type=Path,
         default=WORKSPACE / "priorcell/artifacts/gene_vocabulary",
+    )
+    parser.add_argument(
+        "--priors",
+        type=Path,
+        default=WORKSPACE / "priorcell/artifacts/priors",
     )
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--amp", choices=("bf16", "fp16", "none"), default="bf16")

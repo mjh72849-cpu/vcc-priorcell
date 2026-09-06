@@ -191,6 +191,11 @@ class GenePriorEncoder(nn.Module):
         self.prior_projection = nn.ModuleDict(
             {name: nn.Linear(dim, dim, bias=False) for name in self.enabled_priors}
         )
+        # A higher-level model initialised from Level 2 must begin as the exact
+        # Level-2 function. Prior residuals then enter gradually through learned
+        # projections instead of perturbing a good checkpoint at step zero.
+        for projection in self.prior_projection.values():
+            nn.init.zeros_(projection.weight)
         self.gates = nn.ModuleDict(
             {
                 name: nn.Sequential(

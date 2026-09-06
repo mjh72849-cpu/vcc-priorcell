@@ -108,6 +108,13 @@ class LossConfig:
     delta_weight: float = 0.5
     direction_weight: float = 0.1
     de_weight: float = 0.2
+    # Match the global perturbation-effect scale so the identity solution is not
+    # rewarded merely because most genes are unchanged.
+    magnitude_weight: float = 0.0
+    # Explicitly supervise the perturbed gene whenever it is measured.
+    target_weight: float = 0.0
+    # Penalise wrong signs on the strongest observed DE genes.
+    de_direction_weight: float = 0.0
     unsupervised_effect_weight: float = 0.02
     distribution_projections: int = 32
 
@@ -128,6 +135,7 @@ class CompositePerturbationLoss(nn.Module):
         de_gene_mask: Tensor | None = None,
         effect_supervision_mask: Tensor | None = None,
         projection_directions: Tensor | None = None,
+        target_gene_index: Tensor | None = None,
     ) -> dict[str, Tensor]:
         expression = negative_binomial_nll(
             observed_perturbed_counts,
@@ -142,12 +150,15 @@ class CompositePerturbationLoss(nn.Module):
             projection_directions,
             observed_gene_mask,
         )
-        predicted_delta = torch.log1p(output.mean.mean(dim=1)) - torch.log1p(
-            output.control_mean.mean(dim=1)
-        )
-        observed_delta = torch.log1p(observed_perturbed_counts.mean(dim=1)) - torch.log1p(
-            control_counts.mean(dim=1)
-        )
+        # Match the challenge-style comparison in library-normalised expression
+        # space. Raw pseudobulk deltas otherwise learn dataset-specific library
+        # size shifts instead of gene-specific perturbation responses.
+        predicted_delta = _log_normalize(output.mean).mean(dim=1) - _log_normalize(
+            output.control_mean
+        ).mean(dim=1)
+        observed_delta = _log_normalize(observed_perturbed_counts).mean(
+            dim=1
+        ) - _log_normalize(control_counts).mean(dim=1)
         delta_elementwise = F.smooth_l1_loss(
             predicted_delta, observed_delta, reduction="none"
         )
@@ -167,8 +178,52 @@ class CompositePerturbationLoss(nn.Module):
         )
         if de_gene_mask is None:
             de = predicted_delta.new_zeros(())
+            de_direction = predicted_delta.new_zeros(())
         else:
             de = _masked_mean(delta_elementwise, de_gene_mask)
+            # Require the predicted change to reach the observed sign with a
+            # conservative, data-dependent margin capped at 0.1 log units.
+            direction_margin = observed_delta.abs().clamp(max=0.1)
+            signed_prediction = observed_delta.sign() * predicted_delta
+            de_direction = _masked_mean(
+                F.relu(direction_margin - signed_prediction), de_gene_mask
+            )
+
+        if observed_gene_mask is None:
+            scale_mask = torch.ones_like(predicted_delta, dtype=torch.bool)
+        else:
+            scale_mask = torch.broadcast_to(
+                observed_gene_mask.to(torch.bool), predicted_delta.shape
+            )
+        scale_count = scale_mask.sum(dim=-1).clamp_min(1)
+        # The perturbation head starts at exact zero. A bare sqrt has an
+        # infinite derivative there (0 * inf becomes NaN in backprop), so keep
+        # the scale norm smooth around the identity initialisation.
+        scale_eps = 1e-8
+        predicted_rms = (
+            (predicted_delta.square() * scale_mask).sum(dim=-1) / scale_count
+            + scale_eps
+        ).sqrt()
+        observed_rms = (
+            (observed_delta.square() * scale_mask).sum(dim=-1) / scale_count
+            + scale_eps
+        ).sqrt()
+        magnitude = F.smooth_l1_loss(predicted_rms, observed_rms)
+
+        target_gene_loss = predicted_delta.new_zeros(())
+        if target_gene_index is not None:
+            target_gene_index = target_gene_index.to(output.output_gene_index.device)
+            matches = target_gene_index[:, None] == output.output_gene_index[None, :]
+            present = matches.any(dim=-1)
+            if present.any():
+                positions = matches.to(torch.long).argmax(dim=-1)
+                batch_index = torch.arange(
+                    predicted_delta.shape[0], device=predicted_delta.device
+                )
+                target_gene_loss = F.smooth_l1_loss(
+                    predicted_delta[batch_index[present], positions[present]],
+                    observed_delta[batch_index[present], positions[present]],
+                )
 
         if effect_supervision_mask is None:
             unsupervised_effect = predicted_delta.new_zeros(())
@@ -184,6 +239,9 @@ class CompositePerturbationLoss(nn.Module):
             + self.config.delta_weight * delta
             + self.config.direction_weight * direction
             + self.config.de_weight * de
+            + self.config.magnitude_weight * magnitude
+            + self.config.target_weight * target_gene_loss
+            + self.config.de_direction_weight * de_direction
             + self.config.unsupervised_effect_weight * unsupervised_effect
         )
         return {
@@ -193,5 +251,8 @@ class CompositePerturbationLoss(nn.Module):
             "delta": delta,
             "direction": direction,
             "de": de,
+            "magnitude": magnitude,
+            "target_gene_loss": target_gene_loss,
+            "de_direction": de_direction,
             "unsupervised_effect": unsupervised_effect,
         }
