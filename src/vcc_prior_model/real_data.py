@@ -96,6 +96,7 @@ class BackedH5adDataset:
         self.path = Path(path)
         self.name = name or self.path.stem
         self.handle = h5py.File(self.path, "r")
+        self.matrix_path = "layers/counts" if "counts" in self.handle.get("layers", {}) else "X"
         self.var_names = tuple(read_var_names(self.handle))
         self.num_cells = int(self._shape()[0])
         global_by_symbol = vocabulary.global_index_by_symbol
@@ -136,9 +137,46 @@ class BackedH5adDataset:
             if self.control_label is not None
             else np.arange(self.num_cells, dtype=np.int64)
         )
+        self.context_keys = tuple(
+            key for key in ("cell_type", "treatment") if key in self.handle["obs"]
+        )
+        if self.target_key is not None and self.context_keys:
+            target_values = np.asarray(
+                read_h5ad_strings(self.handle["obs"][self.target_key]), dtype=object
+            )
+            context_columns = [
+                read_h5ad_strings(self.handle["obs"][key]) for key in self.context_keys
+            ]
+            context_values = np.asarray(
+                ["|".join(values) for values in zip(*context_columns, strict=True)],
+                dtype=object,
+            )
+            contexts = sorted(set(context_values.tolist()))
+            self.context_control_indices = {
+                context: np.flatnonzero(
+                    (context_values == context) & (target_values == self.control_label)
+                )
+                for context in contexts
+            }
+            self.episode_groups = {
+                (context, target): np.flatnonzero(
+                    (context_values == context) & (target_values == target)
+                )
+                for context in contexts
+                for target in sorted(set(target_values[context_values == context].tolist()))
+                if target != self.control_label
+            }
+        else:
+            default_context = self.name
+            self.context_control_indices = {default_context: self.control_indices}
+            self.episode_groups = {
+                (default_context, target): indices
+                for target, indices in self.groups.items()
+                if target != self.control_label
+            }
 
     def _shape(self) -> tuple[int, int]:
-        x = self.handle["X"]
+        x = self.handle[self.matrix_path]
         if isinstance(x, h5py.Dataset):
             return int(x.shape[0]), int(x.shape[1])
         shape = x.attrs.get("shape")
@@ -151,7 +189,7 @@ class BackedH5adDataset:
         return tuple(sorted(target for target in self.groups if target != self.control_label))
 
     def _read_unique_rows(self, rows: np.ndarray) -> np.ndarray:
-        x = self.handle["X"]
+        x = self.handle[self.matrix_path]
         if isinstance(x, h5py.Dataset):
             return np.asarray(x[rows], dtype=np.float32)
         encoding = x.attrs.get("encoding-type", "")
@@ -224,16 +262,37 @@ class BackedH5adDataset:
         return rng.choice(pool, size=count, replace=len(pool) < count)
 
     def sample_control(self, count: int, rng: np.random.Generator) -> tuple[Tensor, Tensor]:
-        rows = self.sample_indices(self.control_indices, count, rng)
+        inputs, outputs, _ = self.sample_control_with_indices(count, rng)
+        return inputs, outputs
+
+    def sample_control_with_indices(
+        self,
+        count: int,
+        rng: np.random.Generator,
+        context: str | None = None,
+    ) -> tuple[Tensor, Tensor, np.ndarray]:
+        """Sample controls and return source row indices for cached embeddings."""
+
+        pool = (
+            self.control_indices
+            if context is None
+            else self.context_control_indices[context]
+        )
+        rows = self.sample_indices(pool, count, rng)
         values = self._read_rows_all_columns(rows)
         inputs = values[:, self.alignment.input_local_index]
         outputs = values[:, self.alignment.output_local_index]
-        return torch.from_numpy(inputs), torch.from_numpy(outputs)
+        return torch.from_numpy(inputs), torch.from_numpy(outputs), rows
 
     def sample_perturbed(
-        self, target: str, count: int, rng: np.random.Generator
+        self,
+        target: str,
+        count: int,
+        rng: np.random.Generator,
+        context: str | None = None,
     ) -> Tensor:
-        rows = self.sample_indices(self.groups[target], count, rng)
+        pool = self.groups[target] if context is None else self.episode_groups[(context, target)]
+        rows = self.sample_indices(pool, count, rng)
         outputs = self.read_rows(rows, self.alignment.output_local_index)
         return torch.from_numpy(outputs)
 

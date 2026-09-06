@@ -1,0 +1,46 @@
+{
+  "selected_checkpoint": "checkpoints/level31_best.pt",
+  "source_checkpoint": "checkpoints/level31_holdout.pt",
+  "checkpoint_step": 5624,
+  "selection_dataset": "../data/vcc_2025/validation/adata_Validation.h5ad",
+  "selection_targets": 50,
+  "selection_is_strict_holdout": true,
+  "trained_datasets": [
+    "../data/vcc_2025/train/adata_Training.h5ad",
+    "../data/vcc_2025/test/adata_Test.h5ad",
+    "../data/training/replogle_k562_vcc_balanced_raw.h5ad"
+  ],
+  "recommended_calibration": {
+    "decoder_baseline_weight": 0.02,
+    "effect_scale": 0.20,
+    "library_size_preserving": true
+  },
+  "traditional_holdout_metrics": {
+    "delta_mse": 0.0013408842554781587,
+    "delta_cosine": 0.11787797907367349,
+    "top_gene_jaccard": 0.09296274104385165,
+    "top_gene_sign_accuracy": 0.6178999835252762,
+    "effect_rms_ratio": 0.876537019610405,
+    "pseudobulk_mae": 0.01700131569057703,
+    "sliced_wasserstein": 0.0018059198488481344
+  },
+  "support_holdout_metrics": {
+    "average_precision": 0.1737549200625753,
+    "top_true_count_jaccard": 0.11987042656114102,
+    "recall_at_true_count": 0.1961768299064394,
+    "recall_at_twice_true_count": 0.3011768762797022,
+    "support_brier": 0.022277508557425538,
+    "de_sign_accuracy": 0.6955691414132655
+  },
+  "level3_reference": {
+    "comparison_seed": 2036,
+    "decoder_baseline_weight": 0.02,
+    "effect_scale": 0.20,
+    "delta_mse": 0.0011521068486035802,
+    "delta_cosine": 0.09499102793633937,
+    "top_gene_jaccard": 0.057663780425114365,
+    "top_gene_sign_accuracy": 0.5880999845266343,
+    "effect_rms_ratio": 0.46460807144641875
+  },
+  "submitted_to_vcc": false
+}

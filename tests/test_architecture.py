@@ -82,9 +82,7 @@ def test_context_is_permutation_invariant() -> None:
     genes = model.encode_genes(priors)
     original = model.encode_context(counts, genes)
     permuted = model.encode_context(counts[:, torch.randperm(counts.shape[1])], genes)
-    assert torch.allclose(
-        original.context_embedding, permuted.context_embedding, atol=1e-6
-    )
+    assert torch.allclose(original.context_embedding, permuted.context_embedding, atol=1e-6)
     assert torch.allclose(original.state_prototypes, permuted.state_prototypes, atol=1e-6)
 
 
@@ -93,9 +91,7 @@ def test_chunked_context_matches_dense_context() -> None:
     counts = torch.poisson(torch.full((1, 13, 23), 1.2))
     genes = model.encode_genes(priors)
     dense = model.encode_context(counts, genes)
-    chunked = model.encode_context_chunks(
-        [counts[:, :4], counts[:, 4:9], counts[:, 9:]], genes
-    )
+    chunked = model.encode_context_chunks([counts[:, :4], counts[:, 4:9], counts[:, 9:]], genes)
     assert torch.allclose(dense.context_embedding, chunked.context_embedding, atol=1e-6)
     assert torch.allclose(dense.state_prototypes, chunked.state_prototypes, atol=1e-6)
     assert torch.allclose(dense.gene_context_stats, chunked.gene_context_stats, atol=1e-6)
@@ -141,7 +137,15 @@ def test_loss_interface_is_finite() -> None:
         "magnitude",
         "target_gene_loss",
         "de_direction",
+        "support",
+        "ranking",
+        "support_sign",
+        "support_magnitude",
+        "cardinality",
         "unsupervised_effect",
+        "calibration_regularization",
+        "population_regularization",
+        "baseline_mix_regularization",
     }
     assert all(torch.isfinite(value) for value in losses.values())
 
@@ -262,6 +266,64 @@ def test_effect_strength_and_target_losses_receive_gradients() -> None:
     assert model.decoder.effect_cell_projection.weight.grad is not None
 
 
+def test_factorized_effect_warm_start_and_level31_losses() -> None:
+    base_model, priors = _small_model()
+    with torch.no_grad():
+        base_model.decoder.target_relation.weight.normal_(std=0.05)
+    config = replace(base_model.config, factorized_effect=True)
+    model = PriorAwarePerturbationModel(config).eval()
+    current = model.state_dict()
+    compatible = {
+        key: value
+        for key, value in base_model.state_dict().items()
+        if key in current and current[key].shape == value.shape
+    }
+    model.load_state_dict(compatible, strict=False)
+    context = torch.poisson(torch.full((1, 9, 23), 1.5))
+    query = context[:, :4]
+    target = torch.tensor([3])
+    base_output = base_model(context, query, target, priors)
+    output = model(context, query, target, priors)
+    assert torch.allclose(output.log_effect, base_output.log_effect, atol=1e-6)
+    assert output.effect_support_logits is not None
+    assert output.effect_support_probability is not None
+    assert output.effect_sign_logits is not None
+    assert output.effect_magnitude is not None
+    assert output.effect_strength is not None
+    assert output.effect_support_logits.shape == (1, 23)
+    assert torch.allclose(output.mean.sum(dim=-1), output.control_mean.sum(dim=-1), atol=1e-4)
+
+    observed_delta = torch.zeros((1, 23))
+    observed_delta[:, 3] = -1.0
+    de_mask = torch.zeros((1, 23), dtype=torch.bool)
+    de_mask[:, 3] = True
+    losses = CompositePerturbationLoss(
+        LossConfig(
+            distribution_weight=0.0,
+            delta_weight=0.0,
+            direction_weight=0.0,
+            de_weight=0.0,
+            support_weight=1.0,
+            ranking_weight=1.0,
+            support_sign_weight=1.0,
+            support_magnitude_weight=1.0,
+            cardinality_weight=1.0,
+            unsupervised_effect_weight=0.0,
+        )
+    )(
+        output,
+        query,
+        query,
+        de_gene_mask=de_mask,
+        observed_delta_target=observed_delta,
+    )
+    assert all(torch.isfinite(value) for value in losses.values())
+    losses["loss"].backward()
+    assert model.decoder.support_condition_projection.weight.grad is not None
+    assert model.decoder.magnitude_condition_projection.weight.grad is not None
+    assert model.decoder.effect_strength_head.weight.grad is not None
+
+
 def test_active_prior_count_normalization() -> None:
     model, _ = _small_model()
     prior_sum = torch.tensor([[4.0, 8.0], [3.0, 6.0], [0.0, 0.0]])
@@ -315,9 +377,7 @@ def test_global_vocabulary_dataset_panel_and_fixed_output_are_decoupled() -> Non
     )
     output_index = torch.tensor([0, 2, 4, 6, 8, 10, 12])
     panel_index = torch.tensor([0, 2, 5, 23, 24])
-    model = PriorAwarePerturbationModel(
-        config, output_gene_index=output_index
-    ).eval()
+    model = PriorAwarePerturbationModel(config, output_gene_index=output_index).eval()
     context = torch.poisson(torch.full((1, 9, panel_index.numel()), 1.2))
     query = context[:, :3]
     output = model(
@@ -403,9 +463,7 @@ def test_all_tiers_accept_dataset_panels_and_fixed_output() -> None:
 def test_independent_gene_rate_does_not_depend_on_decode_panel() -> None:
     model, priors = _small_model()
     query = torch.poisson(torch.full((1, 4, 23), 1.0))
-    one_gene = model.reconstruct_control(
-        query, priors, decode_gene_index=torch.tensor([3])
-    )
+    one_gene = model.reconstruct_control(query, priors, decode_gene_index=torch.tensor([3]))
     larger_panel = model.reconstruct_control(
         query, priors, decode_gene_index=torch.tensor([1, 3, 7, 11])
     )
@@ -445,6 +503,95 @@ def test_zero_effect_initialization_does_not_block_transition_gradient() -> None
     final_transition = model.transition.delta[-1]
     assert final_transition.weight.grad is not None
     assert torch.count_nonzero(final_transition.weight.grad) > 0
+
+
+def test_level4_fuses_state_and_anchors_empirical_baseline() -> None:
+    config = ModelConfig(
+        num_genes=11,
+        gene_dim=16,
+        cell_dim=16,
+        context_dim=16,
+        perturbation_dim=16,
+        decoder_dim=8,
+        context_prototypes=3,
+        dropout=0.0,
+        prior_dropout=0.0,
+        factorized_effect=True,
+        pretrained_cell_dim=7,
+        population_rank=3,
+    )
+    model = build_model(ArchitectureLevel.CONTEXT_ADAPTIVE, config).eval()
+    context = torch.poisson(torch.full((2, 5, config.num_genes), 0.5))
+    query = torch.poisson(torch.full((2, 4, config.num_genes), 0.5))
+    output = model(
+        context,
+        query,
+        torch.tensor([1, 2]),
+        context_pretrained_cell_state=torch.randn(2, 5, 7),
+        query_pretrained_cell_state=torch.randn(2, 4, 7),
+        empirical_baseline_counts=query.clone(),
+        gene_chunk_size=4,
+    )
+    assert output.mean.shape == query.shape
+    assert output.effect_calibration is not None
+    assert torch.allclose(output.effect_calibration, torch.ones_like(output.effect_calibration))
+    assert output.baseline_mix_probability is not None
+    assert output.baseline_mix_probability.shape == (2, 1, config.num_genes)
+    assert output.population_residual is not None
+    assert torch.count_nonzero(output.population_residual) == 0
+    assert torch.all(output.control_mean[query == 0] > 0)
+
+
+def test_level4_rejects_misaligned_state_cache() -> None:
+    config = ModelConfig(
+        num_genes=11,
+        gene_dim=16,
+        cell_dim=16,
+        context_dim=16,
+        perturbation_dim=16,
+        decoder_dim=8,
+        pretrained_cell_dim=7,
+    )
+    model = build_model(ArchitectureLevel.CONTEXT_ADAPTIVE, config).eval()
+    counts = torch.ones(1, 3, config.num_genes)
+    try:
+        model(
+            counts,
+            counts,
+            torch.tensor([0]),
+            context_pretrained_cell_state=torch.ones(1, 3, 8),
+        )
+    except ValueError as error:
+        assert "expected pretrained embedding width" in str(error)
+    else:
+        raise AssertionError("misaligned STATE embedding was accepted")
+
+
+def test_level4_state_context_stream_matches_dense() -> None:
+    config = ModelConfig(
+        num_genes=11,
+        gene_dim=16,
+        cell_dim=16,
+        context_dim=16,
+        perturbation_dim=16,
+        decoder_dim=8,
+        context_prototypes=3,
+        dropout=0.0,
+        prior_dropout=0.0,
+        pretrained_cell_dim=7,
+    )
+    model = build_model(ArchitectureLevel.CONTEXT_ADAPTIVE, config).eval()
+    counts = torch.poisson(torch.full((1, 9, 11), 0.8))
+    state = torch.randn(1, 9, 7)
+    genes = model.encode_genes()
+    dense = model.encode_context(counts, genes, pretrained_cell_state=state)
+    streamed = model.encode_context_chunks(
+        (counts[:, :4], counts[:, 4:]),
+        genes,
+        pretrained_cell_state_chunks=(state[:, :4], state[:, 4:]),
+    )
+    assert torch.allclose(dense.context_embedding, streamed.context_embedding, atol=1e-6)
+    assert torch.allclose(dense.state_prototypes, streamed.state_prototypes, atol=1e-6)
 
 
 if __name__ == "__main__":

@@ -14,10 +14,15 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from vcc_prior_model import GeneVocabularyArtifacts, ModelConfig, build_model
+from vcc_prior_model import (
+    GeneVocabularyArtifacts,
+    ModelConfig,
+    apply_library_preserving_effect,
+    build_model,
+)
 from vcc_prior_model.losses import sliced_wasserstein_distance
-from vcc_prior_model.real_data import BackedH5adDataset
 from vcc_prior_model.prior_data import PriorArtifacts
+from vcc_prior_model.real_data import BackedH5adDataset
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 
@@ -48,12 +53,8 @@ def effect_metrics(
     delta_mse = F.mse_loss(predicted_delta, observed_delta)
     cosine = F.cosine_similarity(predicted_delta, observed_delta, dim=-1).mean()
     k = min(top_k, predicted_delta.shape[-1])
-    predicted_top = set(
-        predicted_delta.abs().topk(k, dim=-1).indices[0].detach().cpu().tolist()
-    )
-    observed_top = set(
-        observed_delta.abs().topk(k, dim=-1).indices[0].detach().cpu().tolist()
-    )
+    predicted_top = set(predicted_delta.abs().topk(k, dim=-1).indices[0].detach().cpu().tolist())
+    observed_top = set(observed_delta.abs().topk(k, dim=-1).indices[0].detach().cpu().tolist())
     union = predicted_top | observed_top
     observed_top_index = torch.tensor(
         sorted(observed_top), device=predicted.device, dtype=torch.long
@@ -92,9 +93,7 @@ def effect_metrics(
         "observed_effect_rms": float(observed_rms),
         "effect_rms_ratio": float(predicted_rms / observed_rms.clamp_min(1e-8)),
         "pseudobulk_mae": float(
-            (predicted_normalized.mean(dim=1) - observed_normalized.mean(dim=1))
-            .abs()
-            .mean()
+            (predicted_normalized.mean(dim=1) - observed_normalized.mean(dim=1)).abs().mean()
         ),
         "sliced_wasserstein": float(distribution),
     }
@@ -114,9 +113,7 @@ def expand_context(context: Any, batch: int) -> Any:
 
 def average(records: list[dict[str, Any]], prefix: str) -> dict[str, float]:
     keys = records[0][prefix]
-    return {
-        key: float(np.mean([record[prefix][key] for record in records])) for key in keys
-    }
+    return {key: float(np.mean([record[prefix][key] for record in records])) for key in keys}
 
 
 def evaluate(args: argparse.Namespace) -> dict[str, Any]:
@@ -137,9 +134,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("checkpoint and current global vocabulary have different sizes")
     if tuple(checkpoint["global_gene_symbols"]) != vocabulary.global_gene_symbols:
         raise ValueError("checkpoint and current global vocabulary have different symbols")
-    model = build_model(
-        checkpoint["level"], config, vocabulary.output_gene_index
-    ).to(device)
+    model = build_model(checkpoint["level"], config, vocabulary.output_gene_index).to(device)
     model.load_state_dict(checkpoint["model_state"], strict=True)
     model.eval()
     priors = (
@@ -164,9 +159,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             for counts in dataset.input_chunks(context_rows, args.context_chunk_size):
                 yield move(counts, device)
 
-        with torch.amp.autocast(
-            device_type=device.type, dtype=amp_dtype, enabled=use_amp
-        ):
+        with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
             context = model.encode_context_chunks(
                 context_chunks(),
                 gene_embeddings,
@@ -188,9 +181,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             query_device = move(query, device)
             control_device = move(control_observed, device)
             observed_device = move(perturbed_observed, device)
-            with torch.amp.autocast(
-                device_type=device.type, dtype=amp_dtype, enabled=use_amp
-            ):
+            with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
                 output = model.predict_from_context(
                     query_device,
                     vocabulary.target_index([target]).to(device),
@@ -223,14 +214,18 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             }
             for decoder_weight in args.decoder_baseline_weights:
                 prediction_baseline = (
-                    (1.0 - decoder_weight) * control_device
-                    + decoder_weight * output.control_mean.float()
-                )
+                    1.0 - decoder_weight
+                ) * control_device + decoder_weight * output.control_mean.float()
                 for effect_scale in args.effect_scales:
                     variant = f"anchor_w{decoder_weight:g}_effect_s{effect_scale:g}"
-                    predicted = prediction_baseline * (
-                        effect_scale * raw_log_effect
-                    ).exp()
+                    scaled_effect = effect_scale * raw_log_effect
+                    predicted = (
+                        apply_library_preserving_effect(
+                            prediction_baseline, scaled_effect, model.config.eps
+                        )
+                        if model.config.factorized_effect
+                        else prediction_baseline * scaled_effect.exp()
+                    )
                     record[variant] = effect_metrics(
                         predicted,
                         observed_device,
@@ -249,9 +244,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         "dataset": str(args.data),
         "targets": len(records),
         "summary": {
-            name: average(records, name)
-            for name in records[0]
-            if name not in {"target", "cells"}
+            name: average(records, name) for name in records[0] if name not in {"target", "cells"}
         },
         "per_target": records,
     }
@@ -287,12 +280,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cells", type=int, default=400)
     parser.add_argument("--top-k", type=int, default=200)
     parser.add_argument("--distribution-projections", type=int, default=16)
-    parser.add_argument(
-        "--decoder-baseline-weights", nargs="+", type=float, default=[0.0, 0.1]
-    )
-    parser.add_argument(
-        "--effect-scales", nargs="+", type=float, default=[0.0, 0.25, 0.5, 1.0]
-    )
+    parser.add_argument("--decoder-baseline-weights", nargs="+", type=float, default=[0.0, 0.1])
+    parser.add_argument("--effect-scales", nargs="+", type=float, default=[0.0, 0.25, 0.5, 1.0])
     parser.add_argument("--max-targets", type=int)
     parser.add_argument("--target-list", type=Path)
     parser.add_argument("--seed", type=int, default=2026)

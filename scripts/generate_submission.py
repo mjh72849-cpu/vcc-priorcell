@@ -16,9 +16,14 @@ import pandas as pd
 import torch
 from scipy import sparse
 
-from vcc_prior_model import GeneVocabularyArtifacts, ModelConfig, build_model
-from vcc_prior_model.real_data import BackedH5adDataset
+from vcc_prior_model import (
+    GeneVocabularyArtifacts,
+    ModelConfig,
+    apply_library_preserving_effect,
+    build_model,
+)
 from vcc_prior_model.prior_data import PriorArtifacts
+from vcc_prior_model.real_data import BackedH5adDataset
 
 WORKSPACE = Path(__file__).resolve().parents[2]
 
@@ -53,10 +58,14 @@ def draw_counts(
     if method == "negative_binomial":
         theta = dispersion.view(1, 1, -1).float()
         probability = mean / (theta + mean)
-        return torch.distributions.NegativeBinomial(
-            total_count=theta,
-            probs=probability.clamp(max=1.0 - eps),
-        ).sample().to(torch.int32)
+        return (
+            torch.distributions.NegativeBinomial(
+                total_count=theta,
+                probs=probability.clamp(max=1.0 - eps),
+            )
+            .sample()
+            .to(torch.int32)
+        )
     raise ValueError(f"unknown count sampling method: {method}")
 
 
@@ -66,16 +75,30 @@ def encode_context(
     device: torch.device,
     chunk_size: int,
     gene_embeddings: torch.Tensor,
+    state_embeddings: np.ndarray | None = None,
 ) -> Any:
     rows = np.arange(dataset.num_cells, dtype=np.int64)
+
     def chunks() -> Any:
         for counts in dataset.input_chunks(rows, chunk_size):
             yield move(counts, device)
+
+    def state_chunks() -> Any:
+        if state_embeddings is None:
+            return
+        for start in range(0, len(rows), chunk_size):
+            values = np.asarray(state_embeddings[start : start + chunk_size]).copy()
+            yield move(torch.from_numpy(values), device)
 
     return model.encode_context_chunks(
         chunks(),
         gene_embeddings,
         input_gene_index=dataset.alignment.input_gene_index.to(device),
+        **(
+            {"pretrained_cell_state_chunks": state_chunks()}
+            if state_embeddings is not None
+            else {}
+        ),
     )
 
 
@@ -91,22 +114,36 @@ def generate_context(
     use_amp: bool,
     shard_path: Path,
     gene_embeddings: torch.Tensor,
+    state_embedding_path: Path | None,
 ) -> dict[str, Any]:
     matrices: list[sparse.csr_matrix] = []
     target_column: list[str] = []
     context_column: list[str] = []
     obs_names: list[str] = []
     maximum_library = 0
-    with BackedH5adDataset(
-        control_path, vocabulary, name=f"vcc_{context_name}"
-    ) as dataset, torch.inference_mode():
+    with (
+        BackedH5adDataset(control_path, vocabulary, name=f"vcc_{context_name}") as dataset,
+        torch.inference_mode(),
+    ):
         if len(dataset.alignment.output_local_index) != vocabulary.num_output_genes:
             raise ValueError(f"context {context_name} does not contain the full VCC panel")
-        with torch.amp.autocast(
-            device_type=device.type, dtype=amp_dtype, enabled=use_amp
-        ):
+        state_embeddings = None
+        if state_embedding_path is not None:
+            state_embeddings = np.load(state_embedding_path, mmap_mode="r")
+            expected = (dataset.num_cells, model.config.pretrained_cell_dim)
+            if state_embeddings.shape != expected:
+                raise ValueError(
+                    f"{state_embedding_path}: expected STATE shape {expected}, "
+                    f"got {state_embeddings.shape}"
+                )
+        with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
             context = encode_context(
-                model, dataset, device, args.context_chunk_size, gene_embeddings
+                model,
+                dataset,
+                device,
+                args.context_chunk_size,
+                gene_embeddings,
+                state_embeddings,
             )
         for target_number, target in enumerate(targets):
             target_rng = np.random.default_rng(
@@ -119,29 +156,48 @@ def generate_context(
             empirical_control = dataset.read_outputs(rows)
             query_device = move(query, device)
             empirical_device = move(empirical_control, device)
-            with torch.amp.autocast(
-                device_type=device.type, dtype=amp_dtype, enabled=use_amp
-            ):
+            with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
                 output = model.predict_from_context(
                     query_device,
                     vocabulary.target_index([target]).to(device),
                     context,
                     query_gene_index=dataset.alignment.input_gene_index.to(device),
+                    **(
+                        {
+                            "query_pretrained_cell_state": move(
+                                torch.from_numpy(np.asarray(state_embeddings[rows]).copy()),
+                                device,
+                            ),
+                            "empirical_baseline_counts": empirical_device,
+                        }
+                        if state_embeddings is not None
+                        and args.checkpoint_level == "context_adaptive"
+                        else {}
+                    ),
                 )
-            decoder_weight = args.decoder_baseline_weight
-            baseline = (
-                (1.0 - decoder_weight) * empirical_device
-                + decoder_weight * output.control_mean.float()
+            if args.checkpoint_level == "context_adaptive":
+                prediction_mean = output.mean.float()
+            else:
+                decoder_weight = args.decoder_baseline_weight
+                baseline = (
+                    1.0 - decoder_weight
+                ) * empirical_device + decoder_weight * output.control_mean.float()
+                scaled_effect = args.effect_scale * output.log_effect.float()
+                prediction_mean = (
+                    apply_library_preserving_effect(baseline, scaled_effect, model.config.eps)
+                    if model.config.factorized_effect
+                    else baseline * scaled_effect.exp()
+                )
+            counts = (
+                draw_counts(
+                    prediction_mean,
+                    output.dispersion,
+                    args.sampling,
+                    model.config.eps,
+                )[0]
+                .cpu()
+                .numpy()
             )
-            prediction_mean = baseline * (
-                args.effect_scale * output.log_effect.float()
-            ).exp()
-            counts = draw_counts(
-                prediction_mean,
-                output.dispersion,
-                args.sampling,
-                model.config.eps,
-            )[0].cpu().numpy()
             if (counts < 0).any():
                 raise RuntimeError("count sampler produced a negative value")
             libraries = counts.sum(axis=1, dtype=np.int64)
@@ -150,8 +206,7 @@ def generate_context(
             target_column.extend([target] * args.cells_per_perturbation)
             context_column.extend([context_name] * args.cells_per_perturbation)
             obs_names.extend(
-                f"{context_name}_{target}_{cell}"
-                for cell in range(args.cells_per_perturbation)
+                f"{context_name}_{target}_{cell}" for cell in range(args.cells_per_perturbation)
             )
             if (target_number + 1) % args.log_every == 0:
                 print(
@@ -173,9 +228,7 @@ def generate_context(
         },
         index=pd.Index(obs_names, name="cell_id"),
     )
-    var = pd.DataFrame(
-        index=pd.Index(vocabulary.output_gene_symbols, name="gene_symbol")
-    )
+    var = pd.DataFrame(index=pd.Index(vocabulary.output_gene_symbols, name="gene_symbol"))
     result = ad.AnnData(X=matrix, obs=obs, var=var)
     result.uns["prediction_manifest"] = {
         "checkpoint": str(args.checkpoint.resolve()),
@@ -215,14 +268,12 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
     if tuple(checkpoint["global_gene_symbols"]) != vocabulary.global_gene_symbols:
         raise ValueError("checkpoint and current global vocabulary differ")
     config = ModelConfig(**checkpoint["model_config"])
-    model = build_model(
-        checkpoint["level"], config, vocabulary.output_gene_index
-    ).to(device)
+    model = build_model(checkpoint["level"], config, vocabulary.output_gene_index).to(device)
     model.load_state_dict(checkpoint["model_state"], strict=True)
     model.eval()
     priors = (
         PriorArtifacts(args.priors, vocabulary).load(device)
-        if checkpoint["level"] in {"functional_prior", "full_prior"}
+        if checkpoint["level"] in {"functional_prior", "full_prior", "context_adaptive"}
         else None
     )
     with torch.inference_mode():
@@ -243,7 +294,12 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
     shard_dir.mkdir(parents=True)
     summaries = []
     shards = []
-    for context_name, control_path in zip("ABC", args.vcc_controls, strict=True):
+    state_paths = args.vcc_state_embeddings or [None, None, None]
+    if checkpoint["level"] == "context_adaptive" and args.vcc_state_embeddings is None:
+        raise ValueError("Level 4 submission requires --vcc-state-embeddings A.npy B.npy C.npy")
+    for context_name, control_path, state_path in zip(
+        "ABC", args.vcc_controls, state_paths, strict=True
+    ):
         shard = shard_dir / f"context_{context_name}.h5ad"
         summaries.append(
             generate_context(
@@ -258,6 +314,7 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
                 use_amp,
                 shard,
                 gene_embeddings,
+                state_path,
             )
         )
         shards.append(shard)
@@ -317,12 +374,10 @@ def parse_args() -> argparse.Namespace:
         "--vcc-controls",
         nargs=3,
         type=Path,
-        default=[
-            WORKSPACE / f"data/vcc_2026_controls/context_{name}.h5ad"
-            for name in "ABC"
-        ],
+        default=[WORKSPACE / f"data/vcc_2026_controls/context_{name}.h5ad" for name in "ABC"],
     )
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--vcc-state-embeddings", nargs=3, type=Path)
     parser.add_argument("--amp", choices=("bf16", "fp16", "none"), default="bf16")
     parser.add_argument("--context-chunk-size", type=int, default=256)
     parser.add_argument("--cells-per-perturbation", type=int, default=400)

@@ -39,6 +39,24 @@ class ModelConfig:
     prior_gate_init_bias: float = -2.0
     prototype_temperature: float = 0.50
     max_log_effect: float = 2.0
+    # Level 3.1 factorises a perturbation into DE support, sign and magnitude.
+    # The reference values normalise the newly-added gates so a Level-3 warm
+    # start is function preserving before the new heads receive supervision.
+    factorized_effect: bool = False
+    support_reference_probability: float = 0.20
+    effect_strength_min: float = 0.10
+    effect_strength_max: float = 0.80
+    effect_strength_reference: float = 0.30
+    magnitude_modulation: float = 0.50
+    # Level 4 consumes frozen STATE SE embeddings. SE-600M emits 512
+    # dimensions; the adapter keeps this dependency outside the core model so
+    # embeddings can be cached once and training remains inexpensive.
+    pretrained_cell_dim: int = 512
+    pretrained_gate_init: float = 0.20
+    context_prior_scale: float = 0.10
+    baseline_decoder_mix_init: float = 0.02
+    population_rank: int = 16
+    population_residual_scale: float = 0.10
     min_dispersion: float = 1e-4
     eps: float = 1e-8
 
@@ -56,6 +74,8 @@ class ModelConfig:
             "prototype_temperature": self.prototype_temperature,
             "min_dispersion": self.min_dispersion,
             "eps": self.eps,
+            "pretrained_cell_dim": self.pretrained_cell_dim,
+            "population_rank": self.population_rank,
         }
         for name, value in positive.items():
             if value <= 0:
@@ -73,6 +93,22 @@ class ModelConfig:
             raise ValueError("prior_dropout must be in [0, 1)")
         if not math.isfinite(self.prior_gate_init_bias):
             raise ValueError("prior_gate_init_bias must be finite")
+        if not 0.0 < self.support_reference_probability < 1.0:
+            raise ValueError("support_reference_probability must be in (0, 1)")
+        if not 0.0 < self.effect_strength_min < self.effect_strength_max:
+            raise ValueError("effect strength bounds must satisfy 0 < min < max")
+        if not (
+            self.effect_strength_min < self.effect_strength_reference < self.effect_strength_max
+        ):
+            raise ValueError("effect_strength_reference must lie inside its bounds")
+        if self.magnitude_modulation < 0.0:
+            raise ValueError("magnitude_modulation must be non-negative")
+        if not 0.0 < self.pretrained_gate_init < 1.0:
+            raise ValueError("pretrained_gate_init must be in (0, 1)")
+        if not 0.0 <= self.baseline_decoder_mix_init < 1.0:
+            raise ValueError("baseline_decoder_mix_init must be in [0, 1)")
+        if self.context_prior_scale < 0.0 or self.population_residual_scale < 0.0:
+            raise ValueError("Level-4 residual scales must be non-negative")
 
     @property
     def output_genes(self) -> int:

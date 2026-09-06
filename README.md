@@ -4,6 +4,9 @@ This directory contains the model architecture, reproducible vocabulary/prior
 artifacts, real-data loaders, and Level 1/2 training and validation entry points.
 Large source matrices remain under `../data/` and are not copied into the package.
 
+The new context-generalising Level 4, including STATE integration, downloads and
+a concrete training command, is documented in [docs/LEVEL4.md](docs/LEVEL4.md).
+
 ## Architecture ladder
 
 All levels accept the same `forward(...)` arguments and return the same
@@ -15,7 +18,9 @@ All levels accept the same `forward(...)` arguments and return the same
 | 1 | `global` | `LearnedGlobalEffectModel` | learned target ID; one global latent shift |
 | 2 | `cell_state` | `LearnedCellStateModel` | cell-specific FiLM shift; no prior |
 | 3 | `functional_prior` | `FunctionalPriorModel` | add GO, STRING and Reactome |
-| 4 | `full_prior` | `PriorAwarePerturbationModel` | add signed/directed CollecTRI GRN |
+| 3.1 | `functional_prior` + `factorized_effect=True` | `FunctionalPriorModel` | stable DE support/sign/magnitude heads and library-preserving effects |
+| 3+ | `full_prior` | `PriorAwarePerturbationModel` | add signed/directed CollecTRI GRN |
+| 4 | `context_adaptive` | `ContextAdaptivePriorModel` | frozen STATE cell state, context-adaptive target prior, calibrated empirical delta and low-rank population response |
 
 ```python
 from vcc_prior_model import ArchitectureLevel, ModelConfig, build_model
@@ -113,6 +118,35 @@ query NTC cell latents ──────────────┬── contr
 The same fused gene space is shared by the perturbation encoder and decoder.
 Every gene always has a learned base embedding. Missing priors are masked rather
 than interpreted as biological zeros.
+
+## Level 3.1 DE-aware fine-tuning
+
+Level 3.1 keeps the Level-3 context and functional-prior backbone, while
+factorising each gene's perturbation response into a perturbation-level DE
+support probability, a cell-level sign, a magnitude adjustment, and a bounded
+context/target strength. The new gates are normalised at initialisation, so
+loading a Level-3 checkpoint initially preserves its exact `log_effect`.
+
+Training no longer creates a noisy top-200 label from each random minibatch.
+`scripts/prepare_de_cache.py` computes deterministic dataset-level
+Mann-Whitney/Wilcoxon statistics from fixed capped cell samples, BH-adjusted q-values, log fold changes, DE
+masks and confidence weights. `scripts/train_real.py --de-cache ...
+--factorized-effect` consumes those artifacts and adds balanced focal support,
+hard-negative ranking, sign, magnitude and DE-cardinality objectives. Cache
+gene order and dataset paths are checked before training.
+
+For a factorised checkpoint, both the decoder and submission/evaluation path
+apply multiplicative effects with per-cell library-size preservation:
+
+```text
+raw_i       = baseline_i * exp(delta_i)
+prediction  = raw * sum(baseline) / sum(raw)
+```
+
+The selected trained artifact is `checkpoints/level31_best.pt`. Its strict
+VCC25-validation evaluations are under `evaluations/level31_*_vcc25val50.json`
+and `evaluations/level31_*_support_vcc25val50.json`. No VCC submission is
+created by Level 3.1 training.
 
 Prior fusion uses three safeguards by default:
 

@@ -144,6 +144,34 @@ class ModelOutput:
     delta_latent: Tensor
     perturbed_latent: Tensor
     state_prototypes: Tensor
+    # Level 3.1 diagnostics. They are absent for the original continuous
+    # decoder, preserving the common Level 0--4 output contract.
+    effect_support_logits: Tensor | None = None
+    effect_support_probability: Tensor | None = None
+    effect_sign_logits: Tensor | None = None
+    effect_magnitude: Tensor | None = None
+    effect_strength: Tensor | None = None
+    # Level 4 diagnostics. ``baseline_mix_probability`` is the fraction of
+    # decoder baseline mixed into empirical NTC counts; the other two fields
+    # make effect shrinkage and population variation directly auditable.
+    effect_calibration: Tensor | None = None
+    baseline_mix_probability: Tensor | None = None
+    population_residual: Tensor | None = None
+
+
+def apply_library_preserving_effect(
+    baseline: Tensor, log_effect: Tensor, eps: float = 1e-8
+) -> Tensor:
+    """Apply a multiplicative effect without changing each cell's library size.
+
+    Structural zeros in ``baseline`` remain zero.  This is preferable to a
+    whole-panel softmax, which would invent expression for unobserved genes.
+    """
+
+    raw = baseline * torch.exp(log_effect)
+    original_library = baseline.sum(dim=-1, keepdim=True)
+    predicted_library = raw.sum(dim=-1, keepdim=True)
+    return raw * (original_library / predicted_library.clamp_min(eps))
 
 
 class GenePriorEncoder(nn.Module):
@@ -151,9 +179,7 @@ class GenePriorEncoder(nn.Module):
 
     PRIOR_NAMES = ("go", "string", "reactome", "grn")
 
-    def __init__(
-        self, config: ModelConfig, enabled_priors: frozenset[str] | None = None
-    ) -> None:
+    def __init__(self, config: ModelConfig, enabled_priors: frozenset[str] | None = None) -> None:
         super().__init__()
         self.config = config
         self.enabled_priors = (
@@ -182,9 +208,7 @@ class GenePriorEncoder(nn.Module):
             else None
         )
         self.grn_encoder = (
-            SignedDirectedGraphEncoder(
-                dim, config.graph_layers, config.dropout, config.eps
-            )
+            SignedDirectedGraphEncoder(dim, config.graph_layers, config.dropout, config.eps)
             if "grn" in self.enabled_priors
             else None
         )
@@ -385,15 +409,16 @@ class PrototypeSetEncoder(nn.Module):
         features = self.phi(cells)
         batch, num_cells, _ = features.shape
         if cell_mask is None:
-            cell_mask = torch.ones(
-                (batch, num_cells), dtype=torch.bool, device=features.device
-            )
+            cell_mask = torch.ones((batch, num_cells), dtype=torch.bool, device=features.device)
         mask = cell_mask.to(features.dtype)
-        logits = torch.einsum(
-            "bnd,kd->bnk",
-            F.normalize(features, dim=-1),
-            F.normalize(self.assignment_prototypes, dim=-1),
-        ) / self.config.prototype_temperature
+        logits = (
+            torch.einsum(
+                "bnd,kd->bnk",
+                F.normalize(features, dim=-1),
+                F.normalize(self.assignment_prototypes, dim=-1),
+            )
+            / self.config.prototype_temperature
+        )
         assignment = torch.softmax(logits, dim=-1) * mask.unsqueeze(-1)
         return PrototypeStatistics(
             feature_sum=torch.einsum("bn,bnd->bd", mask, features),
@@ -419,9 +444,7 @@ class BiologicalPerturbationEncoder(nn.Module):
 
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
-        self.type_embedding = nn.Embedding(
-            config.num_perturbation_types, config.gene_dim // 4
-        )
+        self.type_embedding = nn.Embedding(config.num_perturbation_types, config.gene_dim // 4)
         input_dim = config.gene_dim + config.context_dim + 3 + config.gene_dim // 4
         self.network = nn.Sequential(
             nn.Linear(input_dim, config.perturbation_dim),
@@ -493,24 +516,66 @@ class GeneAwareNegativeBinomialDecoder(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.config = config
-        self.control_cell_projection = nn.Linear(
-            config.cell_dim, config.decoder_dim, bias=False
-        )
-        self.control_gene_projection = nn.Linear(
-            config.gene_dim, config.decoder_dim, bias=False
-        )
-        self.effect_cell_projection = nn.Linear(
-            config.cell_dim, config.decoder_dim, bias=False
-        )
-        self.effect_gene_projection = nn.Linear(
-            config.gene_dim, config.decoder_dim, bias=False
-        )
+        self.control_cell_projection = nn.Linear(config.cell_dim, config.decoder_dim, bias=False)
+        self.control_gene_projection = nn.Linear(config.gene_dim, config.decoder_dim, bias=False)
+        self.effect_cell_projection = nn.Linear(config.cell_dim, config.decoder_dim, bias=False)
+        self.effect_gene_projection = nn.Linear(config.gene_dim, config.decoder_dim, bias=False)
         self.perturbation_projection = nn.Linear(
             config.perturbation_dim, config.decoder_dim, bias=False
         )
         self.target_relation = nn.Linear(config.gene_dim, config.decoder_dim, bias=False)
         self.gene_bias = nn.Parameter(torch.zeros(config.num_genes))
         self.raw_dispersion = nn.Parameter(torch.full((config.num_genes,), 2.0))
+
+        if config.factorized_effect:
+            # Support is perturbation-level rather than cell-level: whether a
+            # gene is DE should be stable across cells, while its realised
+            # effect can remain cell specific through the sign/base head.
+            self.support_condition_projection = nn.Linear(
+                config.perturbation_dim, config.decoder_dim, bias=False
+            )
+            self.support_target_relation = nn.Linear(
+                config.gene_dim, config.decoder_dim, bias=False
+            )
+            self.support_gene_projection = nn.Linear(
+                config.gene_dim, config.decoder_dim, bias=False
+            )
+            support_logit = math.log(
+                config.support_reference_probability / (1.0 - config.support_reference_probability)
+            )
+            self.support_gene_bias = nn.Parameter(torch.full((config.num_genes,), support_logit))
+
+            self.magnitude_condition_projection = nn.Linear(
+                config.perturbation_dim, config.decoder_dim, bias=False
+            )
+            self.magnitude_target_relation = nn.Linear(
+                config.gene_dim, config.decoder_dim, bias=False
+            )
+            self.magnitude_gene_projection = nn.Linear(
+                config.gene_dim, config.decoder_dim, bias=False
+            )
+            self.magnitude_gene_bias = nn.Parameter(torch.zeros(config.num_genes))
+            self.effect_strength_head = nn.Linear(config.perturbation_dim, 1)
+
+            # Zero condition projections give constant support/magnitude gates,
+            # but their random gene keys provide a non-zero first-step
+            # Jacobian. Normalisation below makes this exactly the old Level-3
+            # function at initialisation.
+            for layer in (
+                self.support_condition_projection,
+                self.support_target_relation,
+                self.magnitude_condition_projection,
+                self.magnitude_target_relation,
+            ):
+                nn.init.zeros_(layer.weight)
+            nn.init.zeros_(self.effect_strength_head.weight)
+            relative_strength = (config.effect_strength_reference - config.effect_strength_min) / (
+                config.effect_strength_max - config.effect_strength_min
+            )
+            nn.init.constant_(
+                self.effect_strength_head.bias,
+                math.log(relative_strength / (1.0 - relative_strength)),
+            )
 
         # At initialisation KD mean == control mean. Non-zero effects must be
         # supported by perturbation supervision rather than random decoder noise.
@@ -541,9 +606,10 @@ class GeneAwareNegativeBinomialDecoder(nn.Module):
         log_rate = torch.cat(log_rate_parts, dim=-1)
         log_rate = log_rate + torch.log(size_factor.clamp_min(self.config.eps))
         control_mean = torch.exp(log_rate.clamp(min=-12.0, max=12.0))
-        dispersion = F.softplus(
-            self.raw_dispersion.index_select(0, selected_gene_index)
-        ) + self.config.min_dispersion
+        dispersion = (
+            F.softplus(self.raw_dispersion.index_select(0, selected_gene_index))
+            + self.config.min_dispersion
+        )
         return control_mean, dispersion
 
     def decode_control(
@@ -569,7 +635,17 @@ class GeneAwareNegativeBinomialDecoder(nn.Module):
         perturbation_embedding: Tensor,
         size_factor: Tensor,
         gene_chunk_size: int | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    ) -> tuple[
+        Tensor,
+        Tensor,
+        Tensor,
+        Tensor,
+        Tensor | None,
+        Tensor | None,
+        Tensor | None,
+        Tensor | None,
+        Tensor | None,
+    ]:
         selected = gene_embeddings.index_select(0, output_gene_index)
         control_mean, dispersion = self._control_parameters(
             query_cells, selected, output_gene_index, size_factor, gene_chunk_size
@@ -589,9 +665,67 @@ class GeneAwareNegativeBinomialDecoder(nn.Module):
             relation = torch.einsum("bd,gd->bg", target_query, gene_key).unsqueeze(1)
             effect_parts.append((cell_effect + relation) / math.sqrt(self.config.decoder_dim))
         raw_effect = torch.cat(effect_parts, dim=-1)
-        log_effect = self.config.max_log_effect * torch.tanh(raw_effect)
-        mean = control_mean * torch.exp(log_effect)
-        return mean, control_mean, log_effect, dispersion
+        if not self.config.factorized_effect:
+            log_effect = self.config.max_log_effect * torch.tanh(raw_effect)
+            mean = control_mean * torch.exp(log_effect)
+            return mean, control_mean, log_effect, dispersion, None, None, None, None, None
+
+        support_query = self.support_condition_projection(perturbation_embedding)
+        support_query = support_query + self.support_target_relation(target_gene_embedding)
+        magnitude_query = self.magnitude_condition_projection(perturbation_embedding)
+        magnitude_query = magnitude_query + self.magnitude_target_relation(target_gene_embedding)
+        support_parts = []
+        magnitude_parts = []
+        for start in range(0, selected.shape[0], chunk_size):
+            stop = min(start + chunk_size, selected.shape[0])
+            support_key = self.support_gene_projection(selected[start:stop])
+            magnitude_key = self.magnitude_gene_projection(selected[start:stop])
+            support_bias = self.support_gene_bias.index_select(0, output_gene_index[start:stop])
+            magnitude_bias = self.magnitude_gene_bias.index_select(0, output_gene_index[start:stop])
+            support_parts.append(
+                torch.einsum("bd,gd->bg", support_query, support_key)
+                / math.sqrt(self.config.decoder_dim)
+                + support_bias
+            )
+            magnitude_parts.append(
+                torch.einsum("bd,gd->bg", magnitude_query, magnitude_key)
+                / math.sqrt(self.config.decoder_dim)
+                + magnitude_bias
+            )
+        support_logits = torch.cat(support_parts, dim=-1)
+        support_probability = support_logits.sigmoid()
+        magnitude_adjustment = torch.cat(magnitude_parts, dim=-1)
+        magnitude = self.config.max_log_effect * torch.exp(
+            self.config.magnitude_modulation * torch.tanh(magnitude_adjustment)
+        )
+        strength_fraction = self.effect_strength_head(perturbation_embedding).sigmoid()
+        strength = (
+            self.config.effect_strength_min
+            + (self.config.effect_strength_max - self.config.effect_strength_min)
+            * strength_fraction
+        )
+
+        support_gain = (support_probability / self.config.support_reference_probability).unsqueeze(
+            1
+        )
+        magnitude = magnitude.unsqueeze(1)
+        strength_gain = (strength / self.config.effect_strength_reference).unsqueeze(1)
+        sign_logits = raw_effect
+        log_effect = (torch.tanh(sign_logits) * magnitude * support_gain * strength_gain).clamp(
+            -self.config.max_log_effect, self.config.max_log_effect
+        )
+        mean = apply_library_preserving_effect(control_mean, log_effect, self.config.eps)
+        return (
+            mean,
+            control_mean,
+            log_effect,
+            dispersion,
+            support_logits,
+            support_probability,
+            sign_logits,
+            magnitude,
+            strength,
+        )
 
 
 class PriorAwarePerturbationModel(nn.Module):
@@ -617,9 +751,7 @@ class PriorAwarePerturbationModel(nn.Module):
             output_gene_index = torch.arange(config.num_genes)
         output_gene_index = output_gene_index.to(dtype=torch.long)
         if output_gene_index.ndim != 1 or output_gene_index.numel() != config.output_genes:
-            raise ValueError(
-                f"output_gene_index must have shape [{config.output_genes}]"
-            )
+            raise ValueError(f"output_gene_index must have shape [{config.output_genes}]")
         if output_gene_index.unique().numel() != output_gene_index.numel():
             raise ValueError("output_gene_index must not contain duplicates")
         if output_gene_index.numel() and (
@@ -649,15 +781,11 @@ class PriorAwarePerturbationModel(nn.Module):
             context_counts, gene_embeddings, observed_gene_mask, input_gene_index
         )
         context, prototypes = self.context_encoder(cells, cell_mask)
-        panel_stats = self._gene_context_statistics(
-            context_counts, observed_gene_mask, cell_mask
-        )
+        panel_stats = self._gene_context_statistics(context_counts, observed_gene_mask, cell_mask)
         gene_stats, gene_observed = self._scatter_context_statistics(
             panel_stats, input_gene_index, gene_embeddings.shape[0]
         )
-        return ContextEncoding(
-            context, prototypes, gene_embeddings, gene_stats, gene_observed
-        )
+        return ContextEncoding(context, prototypes, gene_embeddings, gene_stats, gene_observed)
 
     def encode_context_chunks(
         self,
@@ -672,9 +800,7 @@ class PriorAwarePerturbationModel(nn.Module):
         accumulated: PrototypeStatistics | None = None
         accumulated_genes: GeneContextStatistics | None = None
         for counts, mask in _pair_chunks(count_chunks, cell_mask_chunks):
-            cells = self.cell_encoder(
-                counts, gene_embeddings, observed_gene_mask, input_gene_index
-            )
+            cells = self.cell_encoder(counts, gene_embeddings, observed_gene_mask, input_gene_index)
             stats = self.context_encoder.statistics(cells, mask)
             accumulated = stats if accumulated is None else accumulated + stats
             gene_stats = self._gene_context_statistics(counts, observed_gene_mask, mask)
@@ -689,9 +815,7 @@ class PriorAwarePerturbationModel(nn.Module):
         gene_stats, gene_observed = self._scatter_context_statistics(
             accumulated_genes, input_gene_index, gene_embeddings.shape[0]
         )
-        return ContextEncoding(
-            context, prototypes, gene_embeddings, gene_stats, gene_observed
-        )
+        return ContextEncoding(context, prototypes, gene_embeddings, gene_stats, gene_observed)
 
     def _scatter_context_statistics(
         self,
@@ -765,9 +889,7 @@ class PriorAwarePerturbationModel(nn.Module):
     ) -> ModelOutput:
         batch = query_counts.shape[0]
         if perturbation_type is None:
-            perturbation_type = torch.zeros(
-                batch, dtype=torch.long, device=query_counts.device
-            )
+            perturbation_type = torch.zeros(batch, dtype=torch.long, device=query_counts.device)
         genes = context_encoding.gene_embeddings
         target_gene = genes.index_select(0, target_gene_index)
         if target_context_stats is None:
@@ -781,9 +903,7 @@ class PriorAwarePerturbationModel(nn.Module):
             target_context_stats,
             perturbation_type,
         )
-        query = self.cell_encoder(
-            query_counts, genes, query_observed_gene_mask, query_gene_index
-        )
+        query = self.cell_encoder(query_counts, genes, query_observed_gene_mask, query_gene_index)
         perturbed, delta = self._apply_transition(
             query, context_encoding.context_embedding, perturbation
         )
@@ -791,7 +911,17 @@ class PriorAwarePerturbationModel(nn.Module):
             query_counts, query_observed_gene_mask, query_size_factor
         )
         output_index = self._resolve_output_gene_index(decode_gene_index, genes.device)
-        mean, control_mean, log_effect, dispersion = self.decoder(
+        (
+            mean,
+            control_mean,
+            log_effect,
+            dispersion,
+            support_logits,
+            support_probability,
+            sign_logits,
+            effect_magnitude,
+            effect_strength,
+        ) = self.decoder(
             query,
             delta,
             genes,
@@ -813,6 +943,11 @@ class PriorAwarePerturbationModel(nn.Module):
             delta_latent=delta,
             perturbed_latent=perturbed,
             state_prototypes=context_encoding.state_prototypes,
+            effect_support_logits=support_logits,
+            effect_support_probability=support_probability,
+            effect_sign_logits=sign_logits,
+            effect_magnitude=effect_magnitude,
+            effect_strength=effect_strength,
         )
 
     def _apply_transition(
@@ -834,9 +969,7 @@ class PriorAwarePerturbationModel(nn.Module):
         """Reconstruct NTC cells without constructing a fake perturbation."""
 
         genes = self.encode_genes(priors) if gene_embeddings is None else gene_embeddings
-        cells = self.cell_encoder(
-            query_counts, genes, query_observed_gene_mask, query_gene_index
-        )
+        cells = self.cell_encoder(query_counts, genes, query_observed_gene_mask, query_gene_index)
         size_factor = self._resolve_size_factor(
             query_counts, query_observed_gene_mask, query_size_factor
         )

@@ -9,6 +9,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from .config import ModelConfig
+from .level4 import ContextAdaptivePriorModel
 from .model import ModelOutput, PriorAwarePerturbationModel, PriorInputs
 
 
@@ -20,6 +21,7 @@ class ArchitectureLevel(str, Enum):
     CELL_STATE = "cell_state"
     FUNCTIONAL_PRIOR = "functional_prior"
     FULL_PRIOR = "full_prior"
+    CONTEXT_ADAPTIVE = "context_adaptive"
 
 
 class ControlBaselineModel(nn.Module):
@@ -207,4 +209,6 @@ def build_model(
     }
     if level is ArchitectureLevel.FULL_PRIOR:
         return PriorAwarePerturbationModel(config, output_gene_index=output_gene_index)
+    if level is ArchitectureLevel.CONTEXT_ADAPTIVE:
+        return ContextAdaptivePriorModel(config, output_gene_index=output_gene_index)
     return implementations[level](config, output_gene_index)  # type: ignore[return-value]

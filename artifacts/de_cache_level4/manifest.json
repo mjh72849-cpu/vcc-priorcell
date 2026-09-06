@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "method": "Mann-Whitney U/Wilcoxon rank-sum, BH correction",
+  "fdr": 0.05,
+  "minimum_logfc": 0.1,
+  "maximum_control_cells": 512,
+  "maximum_perturbed_cells": 512,
+  "seed": 2031,
+  "datasets": [
+    {
+      "dataset_path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2025/train/adata_Training.h5ad",
+      "file": "adata_Training_30e68bab2005.npz",
+      "targets": 150,
+      "genes": 18077,
+      "control_cells": 512,
+      "median_de_genes": 39.0,
+      "mean_de_genes": 318.56666666666666
+    },
+    {
+      "dataset_path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2025/test/adata_Test.h5ad",
+      "file": "adata_Test_f197812d66ed.npz",
+      "targets": 100,
+      "genes": 18077,
+      "control_cells": 512,
+      "median_de_genes": 47.0,
+      "mean_de_genes": 263.36
+    },
+    {
+      "dataset_path": "/sde/vcc/vcc2026/Maojianhan/data/training/replogle_k562_vcc_balanced_raw.h5ad",
+      "file": "replogle_k562_vcc_balanced_raw_406bf7de9045.npz",
+      "targets": 271,
+      "genes": 7679,
+      "control_cells": 512,
+      "median_de_genes": 3.0,
+      "mean_de_genes": 8.649446494464945
+    }
+  ]
+}

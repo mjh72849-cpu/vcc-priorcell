@@ -126,8 +126,19 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         for symbol in replogle_perturbation_counts
         if symbol not in {"non-targeting", "control", "NTC"}
     ]
+    additional_sources: dict[str, tuple[Path, list[str]]] = {}
+    for path in args.additional_h5ad:
+        symbols, _ = read_h5ad_var(path)
+        name = path.stem.lower().replace("-", "_")
+        if name in additional_sources:
+            raise ValueError(f"duplicate additional dataset name: {name}")
+        additional_sources[name] = (path, symbols)
     global_symbols = ordered_union(
-        vcc_csv_symbols, vcc2025_symbols, replogle_symbols, replogle_target_symbols
+        vcc_csv_symbols,
+        vcc2025_symbols,
+        replogle_symbols,
+        replogle_target_symbols,
+        *(symbols for _, symbols in additional_sources.values()),
     )
     global_by_symbol = {symbol: index for index, symbol in enumerate(global_symbols)}
     output_by_symbol = {symbol: index for index, symbol in enumerate(vcc_csv_symbols)}
@@ -181,7 +192,11 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     ]
     write_csv(output / "vcc_output_mapping.csv", list(output_rows[0]), output_rows)
 
-    datasets = {**vcc_sources, "replogle_k562_gwps": (args.replogle, replogle_symbols)}
+    datasets = {
+        **vcc_sources,
+        "replogle_k562_gwps": (args.replogle, replogle_symbols),
+        **additional_sources,
+    }
     for name, path in args.vcc2025_splits.items():
         if not path.exists() or path.with_suffix(path.suffix + ".aria2").exists():
             continue
@@ -351,6 +366,13 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=WORKSPACE / "priorcell/artifacts/gene_vocabulary",
+    )
+    parser.add_argument(
+        "--additional-h5ad",
+        nargs="*",
+        type=Path,
+        default=[],
+        help="Additional expression panels appended to the global vocabulary",
     )
     args = parser.parse_args()
     args.vcc_contexts = {

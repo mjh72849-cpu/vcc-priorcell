@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "ordering_policy": "all VCC 2026 genes in submission order, then VCC 2025-only genes, then Replogle expression-only genes, then target-only genes; each suffix preserves its source order",
+  "identity_policy": "exact case-sensitive gene_symbol match after stripping whitespace",
+  "global_vocabulary": {
+    "gene_count": 19301,
+    "symbols_sha256": "ea4e1078dc73bca1daac01cff050c7992d202863e89da6b757448d1497e28b12",
+    "vcc_gene_count": 18533,
+    "vcc2025_gene_count": 18080,
+    "vcc2025_overlap": 18077,
+    "vcc2025_only": 3,
+    "vcc2026_only_vs_vcc2025": 456,
+    "replogle_gene_count": 8248,
+    "overlap": 7679,
+    "vcc_only": 10854,
+    "replogle_only": 569,
+    "replogle_target_gene_count": 9866,
+    "replogle_target_only_gene_count": 92
+  },
+  "perturbations": {
+    "target_count": 300,
+    "targets_with_replogle_expression_gene": 231,
+    "targets_without_replogle_expression_gene": 69,
+    "targets_with_replogle_perturbation": 272,
+    "targets_without_replogle_perturbation": 28
+  },
+  "sources": {
+    "vcc_gene_names": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2026_controls/gene_names.csv",
+      "size_bytes": 119295,
+      "gene_count": 18533,
+      "symbols_sha256": "c2b8dec58c02810d64018164155b655c4e7c7be451a3ae579965db193af33723"
+    },
+    "vcc_2025_gene_names": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2025/gene_names.csv",
+      "size_bytes": 116023,
+      "gene_count": 18080,
+      "symbols_sha256": "e29ff3512b4c2440759bfb2a34577049b2f49df786b3e19c2a91b565de47b38e"
+    },
+    "context_A": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2026_controls/context_A.h5ad",
+      "size_bytes": 224973316,
+      "gene_count": 18533,
+      "symbols_sha256": "c2b8dec58c02810d64018164155b655c4e7c7be451a3ae579965db193af33723",
+      "vcc_output_overlap": 18533,
+      "dataset_only_vs_vcc": 0,
+      "missing_from_vcc_output": 0
+    },
+    "context_B": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2026_controls/context_B.h5ad",
+      "size_bytes": 210966111,
+      "gene_count": 18533,
+      "symbols_sha256": "c2b8dec58c02810d64018164155b655c4e7c7be451a3ae579965db193af33723",
+      "vcc_output_overlap": 18533,
+      "dataset_only_vs_vcc": 0,
+      "missing_from_vcc_output": 0
+    },
+    "context_C": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2026_controls/context_C.h5ad",
+      "size_bytes": 226056691,
+      "gene_count": 18533,
+      "symbols_sha256": "c2b8dec58c02810d64018164155b655c4e7c7be451a3ae579965db193af33723",
+      "vcc_output_overlap": 18533,
+      "dataset_only_vs_vcc": 0,
+      "missing_from_vcc_output": 0
+    },
+    "replogle_k562_gwps": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/references/ReplogleWeissman2022_K562_gwps.h5ad",
+      "size_bytes": 8805466154,
+      "gene_count": 8248,
+      "symbols_sha256": "ff1e8ea1608fcad45c42bbf73b9eedaeb4ddca1ac1524e5091e4ae51c59973b2",
+      "vcc_output_overlap": 7679,
+      "dataset_only_vs_vcc": 569,
+      "missing_from_vcc_output": 10854
+    },
+    "replogleweissman2022_rpe1": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/references/replogle_rpe1/ReplogleWeissman2022_rpe1.h5ad",
+      "size_bytes": 1236886900,
+      "gene_count": 8749,
+      "symbols_sha256": "5ad6513d5f7d5b1e98ca993e154f2b2aaac70a3ad585fc42b8abcf006f7527fd",
+      "vcc_output_overlap": 8259,
+      "dataset_only_vs_vcc": 490,
+      "missing_from_vcc_output": 10274
+    },
+    "vcc_2025_train": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2025/train/adata_Training.h5ad",
+      "size_bytes": 15482497461,
+      "gene_count": 18080,
+      "symbols_sha256": "e29ff3512b4c2440759bfb2a34577049b2f49df786b3e19c2a91b565de47b38e",
+      "vcc_output_overlap": 18077,
+      "dataset_only_vs_vcc": 3,
+      "missing_from_vcc_output": 456
+    },
+    "vcc_2025_validation": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2025/validation/adata_Validation.h5ad",
+      "size_bytes": 6928967541,
+      "gene_count": 18080,
+      "symbols_sha256": "e29ff3512b4c2440759bfb2a34577049b2f49df786b3e19c2a91b565de47b38e",
+      "vcc_output_overlap": 18077,
+      "dataset_only_vs_vcc": 3,
+      "missing_from_vcc_output": 456
+    },
+    "vcc_2025_test": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2025/test/adata_Test.h5ad",
+      "size_bytes": 11950739168,
+      "gene_count": 18080,
+      "symbols_sha256": "e29ff3512b4c2440759bfb2a34577049b2f49df786b3e19c2a91b565de47b38e",
+      "vcc_output_overlap": 18077,
+      "dataset_only_vs_vcc": 3,
+      "missing_from_vcc_output": 456
+    }
+  },
+  "prior_only_genes_included": 0,
+  "notes": [
+    "All Replogle perturbation target symbols are included even when absent from the Replogle expression feature matrix.",
+    "Prior-only genes are intentionally not appended; priors are aligned onto the fixed expression/perturbation vocabulary.",
+    "Ensembl IDs are available only from the local Replogle var metadata."
+  ]
+}

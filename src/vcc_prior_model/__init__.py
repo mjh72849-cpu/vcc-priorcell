@@ -5,6 +5,15 @@ loader. It has no expression-matrix reader, training loop, or AnnData dependency
 """
 
 from .config import ModelConfig
+from .de_cache import DifferentialExpressionCache, DifferentialExpressionTarget
+from .level4 import (
+    AdaptiveEffectCalibrator,
+    ContextAdaptivePriorModel,
+    ContextConditionedTargetPrior,
+    DenoisedEmpiricalBaseline,
+    LowRankPopulationResidual,
+    PretrainedCellStateAdapter,
+)
 from .losses import (
     CompositePerturbationLoss,
     LossConfig,
@@ -19,6 +28,7 @@ from .model import (
     ModelOutput,
     PriorAwarePerturbationModel,
     PriorInputs,
+    apply_library_preserving_effect,
 )
 from .tiers import (
     ArchitectureLevel,
@@ -33,12 +43,17 @@ from .vocabulary import DatasetGeneMapping, GeneVocabularyArtifacts
 __all__ = [
     "CompositePerturbationLoss",
     "ContextEncoding",
+    "ContextAdaptivePriorModel",
+    "ContextConditionedTargetPrior",
     "ControlOutput",
     "ControlBaselineModel",
     "DatasetGeneMapping",
+    "DifferentialExpressionCache",
+    "DifferentialExpressionTarget",
     "ArchitectureLevel",
     "FunctionalPriorModel",
     "GeneVocabularyArtifacts",
+    "DenoisedEmpiricalBaseline",
     "LearnedCellStateModel",
     "LearnedGlobalEffectModel",
     "LossConfig",
@@ -47,6 +62,10 @@ __all__ = [
     "ModelOutput",
     "PriorAwarePerturbationModel",
     "PriorInputs",
+    "PretrainedCellStateAdapter",
+    "AdaptiveEffectCalibrator",
+    "LowRankPopulationResidual",
+    "apply_library_preserving_effect",
     "build_model",
     "control_reconstruction_loss",
     "negative_binomial_nll",
