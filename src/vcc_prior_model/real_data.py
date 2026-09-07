@@ -91,7 +91,7 @@ class BackedH5adDataset:
         *,
         name: str | None = None,
         target_key: str | None = None,
-        control_labels: Sequence[str] = ("non-targeting", "control", "NTC"),
+        control_labels: Sequence[str] = ("non-targeting", "control", "NTC", "NT"),
     ) -> None:
         self.path = Path(path)
         self.name = name or self.path.stem
@@ -151,20 +151,25 @@ class BackedH5adDataset:
                 ["|".join(values) for values in zip(*context_columns, strict=True)],
                 dtype=object,
             )
-            contexts = sorted(set(context_values.tolist()))
+            control_rows: dict[str, list[int]] = {}
+            episode_rows: dict[tuple[str, str], list[int]] = {}
+            for row, (context, target) in enumerate(
+                zip(context_values, target_values, strict=True)
+            ):
+                context_name = str(context)
+                target_name = str(target)
+                control_rows.setdefault(context_name, [])
+                if target_name == self.control_label:
+                    control_rows[context_name].append(row)
+                else:
+                    episode_rows.setdefault((context_name, target_name), []).append(row)
             self.context_control_indices = {
-                context: np.flatnonzero(
-                    (context_values == context) & (target_values == self.control_label)
-                )
-                for context in contexts
+                context: np.asarray(rows, dtype=np.int64)
+                for context, rows in sorted(control_rows.items())
             }
             self.episode_groups = {
-                (context, target): np.flatnonzero(
-                    (context_values == context) & (target_values == target)
-                )
-                for context in contexts
-                for target in sorted(set(target_values[context_values == context].tolist()))
-                if target != self.control_label
+                episode: np.asarray(rows, dtype=np.int64)
+                for episode, rows in sorted(episode_rows.items())
             }
         else:
             default_context = self.name

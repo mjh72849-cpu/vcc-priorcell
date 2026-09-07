@@ -48,10 +48,10 @@ class ModelConfig:
     effect_strength_max: float = 0.80
     effect_strength_reference: float = 0.30
     magnitude_modulation: float = 0.50
-    # Level 4 consumes frozen STATE SE embeddings. SE-600M emits 512
-    # dimensions; the adapter keeps this dependency outside the core model so
-    # embeddings can be cached once and training remains inexpensive.
-    pretrained_cell_dim: int = 512
+    # Level 4 consumes the 2,048-dimensional biological cell-state component
+    # from STATE SE-600M. Its CLI appends 10 dataset-ID dimensions, which are
+    # deliberately removed while preparing the cache.
+    pretrained_cell_dim: int = 2048
     pretrained_gate_init: float = 0.20
     context_prior_scale: float = 0.10
     baseline_decoder_mix_init: float = 0.02

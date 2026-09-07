@@ -1,23 +1,23 @@
 {
   "schema_version": 1,
-  "global_gene_count": 19301,
-  "global_vocabulary_sha256": "ea4e1078dc73bca1daac01cff050c7992d202863e89da6b757448d1497e28b12",
+  "global_gene_count": 24413,
+  "global_vocabulary_sha256": "7c7a9d4ac699b8e3c06d4a714a6454239f8379ce4f867b05233653aeb35a8195",
   "parameters": {
     "string_minimum_score": 400,
     "string_top_k": 64
   },
   "go": {
-    "terms": 17821,
-    "memberships": 285178,
+    "terms": 17849,
+    "memberships": 286835,
     "global": {
-      "covered_genes": 18434,
-      "total_genes": 19301,
-      "fraction": 0.955080047665924
+      "covered_genes": 18642,
+      "total_genes": 24413,
+      "fraction": 0.7636095522877155
     },
     "vcc": {
-      "covered_genes": 18074,
+      "covered_genes": 18071,
       "total_genes": 18533,
-      "fraction": 0.9752333675066098
+      "fraction": 0.9750714940916203
     },
     "vcc_targets": {
       "covered_genes": 300,
@@ -26,12 +26,12 @@
     }
   },
   "reactome": {
-    "pathways": 2298,
-    "memberships": 43801,
+    "pathways": 2300,
+    "memberships": 43994,
     "global": {
-      "covered_genes": 10901,
-      "total_genes": 19301,
-      "fraction": 0.5647893891508212
+      "covered_genes": 10965,
+      "total_genes": 24413,
+      "fraction": 0.44914594683160614
     },
     "vcc": {
       "covered_genes": 10643,
@@ -45,16 +45,16 @@
     }
   },
   "string": {
-    "edges": 358333,
+    "edges": 360905,
     "global": {
-      "covered_genes": 18589,
-      "total_genes": 19301,
-      "fraction": 0.9631107196518315
+      "covered_genes": 18721,
+      "total_genes": 24413,
+      "fraction": 0.7668455331176013
     },
     "vcc": {
-      "covered_genes": 18247,
+      "covered_genes": 18248,
       "total_genes": 18533,
-      "fraction": 0.984568067771003
+      "fraction": 0.9846220255759995
     },
     "vcc_targets": {
       "covered_genes": 300,
@@ -63,13 +63,13 @@
     }
   },
   "collectri": {
-    "edges": 42241,
-    "positive_edges": 34526,
-    "negative_edges": 7715,
+    "edges": 42490,
+    "positive_edges": 34750,
+    "negative_edges": 7740,
     "global": {
-      "covered_genes": 6689,
-      "total_genes": 19301,
-      "fraction": 0.34656235428216153
+      "covered_genes": 6724,
+      "total_genes": 24413,
+      "fraction": 0.27542702658419693
     },
     "vcc": {
       "covered_genes": 6551,
@@ -84,14 +84,14 @@
   },
   "any_prior": {
     "global": {
-      "covered_genes": 18780,
-      "total_genes": 19301,
-      "fraction": 0.9730065799699498
+      "covered_genes": 19020,
+      "total_genes": 24413,
+      "fraction": 0.7790931061319789
     },
     "vcc": {
-      "covered_genes": 18407,
+      "covered_genes": 18406,
       "total_genes": 18533,
-      "fraction": 0.9932013165704419
+      "fraction": 0.9931473587654455
     },
     "vcc_targets": {
       "covered_genes": 300,
@@ -99,10 +99,10 @@
       "fraction": 1.0
     },
     "vcc_active_source_histogram": {
-      "0": 126,
-      "1": 450,
-      "2": 5807,
-      "3": 7149,
+      "0": 127,
+      "1": 451,
+      "2": 5804,
+      "3": 7150,
       "4": 5001
     }
   },

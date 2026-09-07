@@ -694,7 +694,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--effect-strength-max", type=float, default=0.8)
     parser.add_argument("--effect-strength-reference", type=float, default=0.3)
     parser.add_argument("--magnitude-modulation", type=float, default=0.5)
-    parser.add_argument("--pretrained-cell-dim", type=int, default=512)
+    parser.add_argument("--pretrained-cell-dim", type=int, default=2048)
     parser.add_argument("--pretrained-gate-init", type=float, default=0.2)
     parser.add_argument("--context-prior-scale", type=float, default=0.1)
     parser.add_argument("--baseline-decoder-mix-init", type=float, default=0.02)

@@ -71,3 +71,25 @@ def test_raw_count_validation_rejects_fractional_values(tmp_path: Path) -> None:
         pytest.raises(ValueError, match="not raw integer counts"),
     ):
         dataset.validate_raw_counts()
+
+
+def test_multicontext_loader_recognizes_nt_controls(tmp_path: Path) -> None:
+    path = tmp_path / "multicontext.h5ad"
+    obs = pd.DataFrame(
+        {
+            "gene": pd.Categorical(["NT", "ACLY", "NT", "ACLY"]),
+            "cell_type": pd.Categorical(["a549", "a549", "k562", "k562"]),
+            "treatment": pd.Categorical(["IFNB", "IFNB", "IFNG", "IFNG"]),
+        },
+        index=[f"cell_{index}" for index in range(4)],
+    )
+    var = pd.DataFrame(index=pd.Index(["TSPAN6", "DPM1"]))
+    ad.AnnData(X=np.ones((4, 2), dtype=np.float32), obs=obs, var=var).write_h5ad(path)
+
+    vocabulary = GeneVocabularyArtifacts(ARTIFACTS)
+    with BackedH5adDataset(path, vocabulary) as dataset:
+        assert dataset.control_label == "NT"
+        assert dataset.context_control_indices["a549|IFNB"].tolist() == [0]
+        assert dataset.context_control_indices["k562|IFNG"].tolist() == [2]
+        assert dataset.episode_groups[("a549|IFNB", "ACLY")].tolist() == [1]
+        assert dataset.episode_groups[("k562|IFNG", "ACLY")].tolist() == [3]

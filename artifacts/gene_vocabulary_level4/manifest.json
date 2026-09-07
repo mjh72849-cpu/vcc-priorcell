@@ -3,8 +3,8 @@
   "ordering_policy": "all VCC 2026 genes in submission order, then VCC 2025-only genes, then Replogle expression-only genes, then target-only genes; each suffix preserves its source order",
   "identity_policy": "exact case-sensitive gene_symbol match after stripping whitespace",
   "global_vocabulary": {
-    "gene_count": 19301,
-    "symbols_sha256": "ea4e1078dc73bca1daac01cff050c7992d202863e89da6b757448d1497e28b12",
+    "gene_count": 24413,
+    "symbols_sha256": "7c7a9d4ac699b8e3c06d4a714a6454239f8379ce4f867b05233653aeb35a8195",
     "vcc_gene_count": 18533,
     "vcc2025_gene_count": 18080,
     "vcc2025_overlap": 18077,
@@ -81,6 +81,15 @@
       "vcc_output_overlap": 8259,
       "dataset_only_vs_vcc": 490,
       "missing_from_vcc_output": 10274
+    },
+    "jiang24_processed": {
+      "path": "/sde/vcc/vcc2026/Maojianhan/data/multicontext/jiang2025/jiang24_processed.h5ad",
+      "size_bytes": 93532364449,
+      "gene_count": 15473,
+      "symbols_sha256": "ac4346e1a056da9251605b1d4033c873012bd4aad78c938fa13278544927ba1f",
+      "vcc_output_overlap": 9940,
+      "dataset_only_vs_vcc": 5533,
+      "missing_from_vcc_output": 8593
     },
     "vcc_2025_train": {
       "path": "/sde/vcc/vcc2026/Maojianhan/data/vcc_2025/train/adata_Training.h5ad",
